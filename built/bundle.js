@@ -64,7 +64,279 @@
 /******/ })
 /************************************************************************/
 /******/ ([
-/* 0 */,
+/* 0 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    path: __webpack_require__(4),
+    util: __webpack_require__(1),
+    patterns: __webpack_require__(23)
+};
+
+////////////////////////////////////////////
+// Simpler check for null/undefined;
+function isNull(value) {
+    return value === null || value === undefined;
+}
+
+////////////////////////////////////////////////////////
+// Verifies parameter for being a non-empty text string;
+function isText(txt) {
+    return txt && typeof txt === 'string' && /\S/.test(txt);
+}
+
+//////////////////////////////////////
+// Verifies value for being an object,
+// based on type and property names.
+function isObject(value, properties) {
+    if (value && typeof value === 'object') {
+        for (let i = 0; i < properties.length; i++) {
+            if (!(properties[i] in value)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+///////////////////////////////////////////////////////////
+// Approximates the environment as being for development.
+//
+// Proper configuration is having NODE_ENV = 'development', but this
+// method only checks for 'dev' being present, and regardless of the case.
+function isDev() {
+    const env = global.process.env.NODE_ENV || '';
+    return env.toLowerCase().indexOf('dev') !== -1;
+}
+
+///////////////////////////////////////////////////
+// Locks all properties in an object to read-only,
+// or freezes the entire object for any changes.
+function lock(obj, freeze, options) {
+    if (options && options.noLocking) {
+        return;
+    }
+    if (freeze) {
+        Object.freeze(obj); // freeze the entire object, permanently;
+    } else {
+        const desc = {
+            writable: false,
+            configurable: false,
+            enumerable: true
+        };
+        for (const p in obj) {
+            Object.defineProperty(obj, p, desc);
+        }
+    }
+}
+
+/////////////////////////////////////////////
+// Adds properties from source to the target,
+// making them read-only and enumerable.
+function addReadProperties(target, source) {
+    for (const p in source) {
+        addReadProp(target, p, source[p]);
+    }
+}
+
+///////////////////////////////////////////////////////
+// Adds a read-only, non-deletable enumerable property.
+function addReadProp(obj, name, value, hidden) {
+    Object.defineProperty(obj, name, {
+        value,
+        configurable: false,
+        enumerable: !hidden,
+        writable: false
+    });
+}
+
+//////////////////////////////////////////////////////////////
+// Converts a connection string or object into its safe copy:
+// if password is present, it is masked with symbol '#'.
+function getSafeConnection(cn) {
+    if (typeof cn === 'object') {
+        const copy = Object.assign({}, cn);
+        if (typeof copy.password === 'string') {
+            copy.password = copy.password.replace(/./g, '#');
+        }
+        if (typeof copy.connectionString === 'string') {
+            copy.connectionString = maskPassword(copy.connectionString);
+        }
+        return copy;
+    }
+    return maskPassword(cn);
+}
+
+///////////////////////////////////////////////////////////
+// Replaces password letters with # in a connection string.
+function maskPassword(connectionString) {
+    return connectionString.replace(/:(?![/])([^@]+)/, (_, m) => {
+        return ':' + new Array(m.length + 1).join('#');
+    });
+}
+
+///////////////////////////////////////////
+// Returns a space gap for console output;
+function messageGap(level) {
+    return Array(1 + level * 4).join(' ');
+}
+
+/////////////////////////////////////////
+// Provides platform-neutral inheritance;
+function inherits(child, parent) {
+    child.prototype.__proto__ = parent.prototype;
+}
+
+///////////////////////////////////////////////////////////////////////////
+// Checks if the path is absolute;
+//
+// Though we do test it, we still skip it from the coverage,
+// because it is platform-specific.
+//
+// istanbul ignore next
+function isPathAbsolute(path) {
+    // Based on: https://github.com/sindresorhus/path-is-absolute
+    if (process.platform === 'win32') {
+        const result = npm.patterns.splitDevice.exec(path);
+        const device = result[1] || '';
+        const isUnc = !!device && device.charAt(1) !== ':';
+        return !!result[2] || isUnc;
+    }
+    return path.charAt(0) === '/';
+}
+
+function getLocalStack(startIdx) {
+    // from the call stack, we take only lines starting with the client's
+    // source code, and only those that contain a full path inside brackets,
+    // indicating a reference to the client's source code:
+    return new Error().stack.split('\n').slice(startIdx).filter(line => {
+        return line.match(/\(.*(\\+|\/+).*\)/); // contains \ or / inside ()
+    }).join('\n');
+}
+
+//////////////////////////////
+// Internal error container;
+function InternalError(error) {
+    this.error = error;
+}
+
+/////////////////////////////////////////////////////////////////
+// Parses a property name, and gets its name from the object,
+// if the property exists. Returns object {valid, has, target, value}:
+//  - valid - true/false, whether the syntax is valid
+//  - has - a flag that property exists; set when 'valid' = true
+//  - target - the target object that contains the property; set when 'has' = true
+//  - value - the value; set when 'has' = true
+function getIfHas(obj, prop) {
+    const result = {valid: true};
+    if (prop.indexOf('.') === -1) {
+        result.has = prop in obj;
+        result.target = obj;
+        if (result.has) {
+            result.value = obj[prop];
+        }
+    } else {
+        const names = prop.split('.');
+        let missing, target;
+        for (let i = 0; i < names.length; i++) {
+            const n = names[i];
+            if (!n) {
+                result.valid = false;
+                return result;
+            }
+            if (!missing && hasProperty(obj, n)) {
+                target = obj;
+                obj = obj[n];
+            } else {
+                missing = true;
+            }
+        }
+        result.has = !missing;
+        if (result.has) {
+            result.target = target;
+            result.value = obj;
+        }
+    }
+    return result;
+}
+
+/////////////////////////////////////////////////////////////////////////
+// Checks if the property exists in the object or value or its prototype;
+function hasProperty(value, prop) {
+    return (value && typeof value === 'object' && prop in value) ||
+        value !== null && value !== undefined && value[prop] !== undefined;
+}
+
+////////////////////////////////////////////////////////
+// Adds prototype inspection, with support of the newer
+// Custom Inspection, which was added in Node.js 6.x
+function addInspection(type, cb) {
+    // istanbul ignore next;
+    if (npm.util.inspect.custom) {
+        // Custom inspection is supported:
+        type.prototype[npm.util.inspect.custom] = cb;
+    } else {
+        // Use classic inspection:
+        type.prototype.inspect = cb;
+    }
+}
+
+////////////////////////////////////////////
+// Identifies a general connectivity error.
+function isConnectivityError(err) {
+    const code = err && typeof err.code === 'string' && err.code;
+    const cls = code && code.substr(0, 2); // Error Class
+    return code === 'ECONNRESET' || cls === '08' || cls === '57';
+    // Code 'ECONNRESET' - Connectivity issue handled by the driver.
+    // Class 08 - Connection Exception.
+    // Class 57 - Operator Intervention.
+    //
+    // ERROR CODES: https://www.postgresql.org/docs/9.6/static/errcodes-appendix.html
+}
+
+const exp = {
+    getIfHas,
+    addInspection,
+    InternalError,
+    getLocalStack,
+    isPathAbsolute,
+    lock,
+    isText,
+    isNull,
+    isDev,
+    isObject,
+    addReadProp,
+    addReadProperties,
+    getSafeConnection,
+    messageGap,
+    inherits,
+    isConnectivityError
+};
+
+const mainFile = process.argv[1];
+
+// istanbul ignore next
+exp.startDir = mainFile ? npm.path.dirname(mainFile) : process.cwd();
+
+Object.freeze(exp);
+
+module.exports = exp;
+
+
+/***/ }),
 /* 1 */
 /***/ (function(module, exports) {
 
@@ -77,7 +349,925 @@ module.exports = require("util");
 module.exports = require("os");
 
 /***/ }),
-/* 3 */,
+/* 3 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    pgUtils: __webpack_require__(13),
+    patterns: __webpack_require__(23),
+    utils: __webpack_require__(0)
+};
+
+// Format Modification Flags;
+const fmFlags = {
+    raw: 1, // Raw-Text variable
+    alias: 2, // SQL Alias
+    name: 4, // SQL Name/Identifier
+    json: 8, // JSON modifier
+    csv: 16, // CSV modifier
+    value: 32 // escaped, but without ''
+};
+
+// Format Modification Map;
+const fmMap = {
+    '^': fmFlags.raw,
+    ':raw': fmFlags.raw,
+    ':alias': fmFlags.alias,
+    '~': fmFlags.name,
+    ':name': fmFlags.name,
+    ':json': fmFlags.json,
+    ':csv': fmFlags.csv,
+    ':list': fmFlags.csv,
+    ':value': fmFlags.value,
+    '#': fmFlags.value
+};
+
+// Global symbols for Custom Type Formatting:
+const ctfSymbols = {
+    toPostgres: Symbol.for('ctf.toPostgres'),
+    rawType: Symbol.for('ctf.rawType')
+};
+
+Object.freeze(ctfSymbols);
+
+const maxVariable = 100000; // maximum supported variable is '$100000'
+
+////////////////////////////////////////////////////
+// Converts a single value into its Postgres format.
+function formatValue(value, fm, cc) {
+
+    if (typeof value === 'function') {
+        return formatValue(resolveFunc(value, cc), fm, cc);
+    }
+
+    const ctf = getCTF(value); // Custom Type Formatting
+    if (ctf) {
+        fm |= ctf.rawType ? fmFlags.raw : 0;
+        return formatValue(resolveFunc(ctf.toPostgres, value), fm, cc);
+    }
+
+    const isRaw = !!(fm & fmFlags.raw);
+    fm &= ~fmFlags.raw;
+
+    switch (fm) {
+        case fmFlags.alias:
+            return $as.alias(value);
+        case fmFlags.name:
+            return $as.name(value);
+        case fmFlags.json:
+            return $as.json(value, isRaw);
+        case fmFlags.csv:
+            return $as.csv(value);
+        case fmFlags.value:
+            return $as.value(value);
+        default:
+            break;
+    }
+
+    if (isNull(value)) {
+        throwIfRaw(isRaw);
+        return 'null';
+    }
+
+    switch (typeof value) {
+        case 'string':
+            return $to.text(value, isRaw);
+        case 'boolean':
+            return $to.bool(value);
+        case 'number':
+            return $to.number(value);
+        case 'symbol':
+            throw new TypeError('Type Symbol has no meaning for PostgreSQL: ' + value.toString());
+        default:
+            if (value instanceof Date) {
+                return $to.date(value, isRaw);
+            }
+            if (value instanceof Array) {
+                return $to.array(value);
+            }
+            if (value instanceof Buffer) {
+                return $to.buffer(value, isRaw);
+            }
+            return $to.json(value, isRaw);
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Converts array of values into PostgreSQL Array Constructor: array[...], as per PostgreSQL documentation:
+// http://www.postgresql.org/docs/9.6/static/arrays.html
+//
+// Arrays of any depth/dimension are supported.
+//
+// Top-level empty arrays are formatted as literal '{}' to avoid the necessity of explicit type casting,
+// as the server cannot automatically infer type of an empty non-literal array.
+function formatArray(array) {
+    const loop = a => '[' + a.map(v => v instanceof Array ? loop(v) : formatValue(v)).join() + ']';
+    return array.length ? ('array' + loop(array)) : '\'{}\'';
+}
+
+///////////////////////////////////////////////////////////////////
+// Formats array/object/value as a list of comma-separated values.
+function formatCSV(values) {
+    if (values instanceof Array) {
+        return values.map(v => formatValue(v)).join();
+    }
+    if (typeof values === 'object' && values !== null) {
+        return Object.keys(values).map(v => formatValue(values[v])).join();
+    }
+    return values === undefined ? '' : formatValue(values);
+}
+
+///////////////////////////////
+// Query formatting helpers;
+const formatAs = {
+
+    object(query, obj, raw, options) {
+        options = options && typeof options === 'object' ? options : {};
+        return query.replace(npm.patterns.namedParameters, name => {
+            const v = formatAs.stripName(name.replace(/^\$[{(<[/]|[\s})>\]/]/g, ''), raw),
+                c = npm.utils.getIfHas(obj, v.name);
+            if (!c.valid) {
+                throw new Error('Invalid property name \'' + v.name + '\'.');
+            }
+            if (c.has) {
+                return formatValue(c.value, v.fm, c.target);
+            }
+            if (v.name === 'this') {
+                return formatValue(obj, v.fm);
+            }
+            if ('default' in options) {
+                const d = options.default, value = typeof d === 'function' ? d.call(obj, v.name, obj) : d;
+                return formatValue(value, v.fm, obj);
+            }
+            if (options.partial) {
+                return name;
+            }
+            // property must exist as the object's own or inherited;
+            throw new Error('Property \'' + v.name + '\' doesn\'t exist.');
+        });
+    },
+
+    array(query, array, raw, options) {
+        options = options && typeof options === 'object' ? options : {};
+        return query.replace(npm.patterns.multipleValues, name => {
+            const v = formatAs.stripName(name.substr(1), raw);
+            const idx = v.name - 1;
+            if (idx >= maxVariable) {
+                throw new RangeError('Variable $' + v.name + ' exceeds supported maximum of $' + maxVariable);
+            }
+            if (idx < array.length) {
+                return formatValue(array[idx], v.fm);
+            }
+            if ('default' in options) {
+                const d = options.default, value = typeof d === 'function' ? d.call(array, idx, array) : d;
+                return formatValue(value, v.fm);
+            }
+            if (options.partial) {
+                return name;
+            }
+            throw new RangeError('Variable $' + v.name + ' out of range. Parameters array length: ' + array.length);
+        });
+    },
+
+    value(query, value, raw) {
+        return query.replace(npm.patterns.singleValue, name => {
+            const v = formatAs.stripName(name, raw);
+            return formatValue(value, v.fm);
+        });
+    },
+
+    stripName(name, raw) {
+        const mod = name.match(npm.patterns.hasValidModifier);
+        if (mod) {
+            return {
+                name: name.substr(0, mod.index),
+                fm: fmMap[mod[0]] | (raw ? fmFlags.raw : 0)
+            };
+        }
+        return {
+            name,
+            fm: raw ? fmFlags.raw : null
+        };
+    }
+};
+
+////////////////////////////////////////////
+// Simpler check for null/undefined;
+function isNull(value) {
+    return value === undefined || value === null;
+}
+
+//////////////////////////////////////////////////////////////////
+// Checks if the value supports Custom Type Formatting,
+// to return {toPostgres, rawType}, if it does, or null otherwise.
+function getCTF(value) {
+    if (!isNull(value)) {
+        const toPostgres = value[ctfSymbols.toPostgres];
+        if (typeof toPostgres === 'function') {
+            verifyCTF(toPostgres);
+            return {toPostgres, rawType: !!value[ctfSymbols.rawType]};
+        }
+        // For backward compatibility:
+        if (typeof value.toPostgres === 'function') {
+            verifyCTF(value.toPostgres);
+            return {toPostgres: value.toPostgres, rawType: !!value.rawType};
+        }
+    }
+    return null;
+}
+
+////////////////////////////////////
+// Validates CTF callback function;
+function verifyCTF(f) {
+    if (f.constructor.name !== 'Function') {
+        throw new Error('CTF does not support asynchronous toPostgres functions.');
+    }
+}
+
+/////////////////////////////////////////
+// Wraps a text string in single quotes;
+function wrapText(text) {
+    return '\'' + text + '\'';
+}
+
+////////////////////////////////////////////////
+// Replaces each single-quote symbol ' with two,
+// for compliance with PostgreSQL strings.
+function safeText(text) {
+    return text.replace(/'/g, '\'\'');
+}
+
+/////////////////////////////////////////////
+// Throws an exception, if flag 'raw' is set.
+function throwIfRaw(raw) {
+    if (raw) {
+        throw new TypeError('Values null/undefined cannot be used as raw text.');
+    }
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// Recursively resolves parameter-function, with an optional Calling Context.
+function resolveFunc(value, cc) {
+    while (typeof value === 'function') {
+        if (value.constructor.name !== 'Function') {
+            // Constructor name for asynchronous functions have different names:
+            // - 'GeneratorFunction' for ES6 generators
+            // - 'AsyncFunction' for ES7 async functions
+            throw new Error('Cannot use asynchronous functions with query formatting.');
+        }
+        value = value.call(cc, cc);
+    }
+    return value;
+}
+
+///////////////////////////////////////////////////////////////////////////////////
+// It implements two types of formatting, depending on the 'values' passed:
+//
+// 1. format '$1, $2, etc', when 'values' is of type string, boolean, number, date,
+//    function or null (or an array of the same types, plus undefined values);
+// 2. format $*propName*, when 'values' is an object (not null and not Date),
+//    and where * is any of the supported open-close pairs: {}, (), [], <>, //
+//
+function $formatQuery(query, values, raw, options) {
+    if (typeof query !== 'string') {
+        throw new TypeError('Parameter \'query\' must be a text string.');
+    }
+    const ctf = getCTF(values);
+    if (ctf) {
+        // Custom Type Formatting
+        return $formatQuery(query, resolveFunc(ctf.toPostgres, values), raw || ctf.rawType, options);
+    }
+    if (typeof values === 'object' && values !== null) {
+        if (values instanceof Array) {
+            // $1, $2,... formatting to be applied;
+            return formatAs.array(query, values, raw, options);
+        }
+        if (!(values instanceof Date || values instanceof Buffer)) {
+            // $*propName* formatting to be applied;
+            return formatAs.object(query, values, raw, options);
+        }
+    }
+    // $1 formatting to be applied, if values != undefined;
+    return values === undefined ? query : formatAs.value(query, values, raw);
+}
+
+//////////////////////////////////////////////////////
+// Formats a standard PostgreSQL function call query;
+function $formatFunction(funcName, values, capSQL) {
+    const sql = capSQL ? 'SELECT * FROM ' : 'select * from ';
+    return sql + funcName + '(' + formatCSV(values) + ')';
+}
+
+function $formatSqlName(name) {
+    return '"' + name.replace(/"/g, '""') + '"';
+}
+
+/**
+ * @namespace formatting
+ * @description
+ * Namespace for all query-formatting functions, available from `pgp.as` before and after initializing the library.
+ *
+ * @property {formatting.ctf} ctf
+ * Namespace for symbols used by $[Custom Type Formatting].
+ *
+ * @property {function} alias
+ * {@link formatting.alias alias} - formats an SQL alias.
+ *
+ * @property {function} name
+ * {@link formatting.name name} - formats an SQL Name/Identifier.
+ *
+ * @property {function} text
+ * {@link formatting.text text} - formats a text string.
+ *
+ * @property {function} number
+ * {@link formatting.number number} - formats a number.
+ *
+ * @property {function} buffer
+ * {@link formatting.buffer buffer} - formats a `Buffer` object.
+ *
+ * @property {function} value
+ * {@link formatting.value value} - formats text as an open value.
+ *
+ * @property {function} json
+ * {@link formatting.json json} - formats any value as JSON.
+ *
+ * @property {function} array
+ * {@link formatting.array array} - formats an array of any depth.
+ *
+ * @property {function} csv
+ * {@link formatting.csv csv} - formats an array as a list of comma-separated values.
+ *
+ * @property {function} func
+ * {@link formatting.func func} - formats the value returned from a function.
+ *
+ * @property {function} format
+ * {@link formatting.format format} - formats a query, according to parameters.
+ *
+ */
+const $as = {
+
+    /**
+     * @namespace formatting.ctf
+     * @description
+     * Namespace for ES6 symbols used by $[Custom Type Formatting], available from `pgp.as.ctf` before and after initializing the library.
+     *
+     * It was added to avoid explicit/enumerable extension of types that need to be used as formatting parameters, to keep their type signature intact.
+     *
+     * @property {external:Symbol} toPostgres
+     * Property name for the $[Custom Type Formatting] callback function `toPostgres`.
+     *
+     * @property {external:Symbol} rawType
+     * Property name for the $[Custom Type Formatting] flag `rawType`.
+     *
+     * @example
+     * const ctf = pgp.as.ctf; // Custom Type Formatting symbols
+     *
+     * class MyType {
+     *     constructor() {
+     *         this[ctf.rawType] = true; // set it only when toPostgres returns a pre-formatted result
+     *     }
+     *
+     *     [ctf.toPostgres](self) {
+     *         // self = this
+     *
+     *         // return the custom/actual value here
+     *     }
+     * }
+     *
+     * const a = new MyType();
+     *
+     * const s = pgp.as.format('$1', a); // will be custom-formatted
+     */
+    ctf: ctfSymbols,
+
+    /**
+     * @method formatting.text
+     * @description
+     * Converts a value into PostgreSQL text presentation, escaped as required.
+     *
+     * Escaping the result means:
+     *  1. Every single-quote (apostrophe) is replaced with two
+     *  2. The resulting text is wrapped in apostrophes
+     *
+     * @param {value|function} value
+     * Value to be converted, or a function that returns the value.
+     *
+     * If the `value` resolves as `null` or `undefined`, while `raw`=`true`,
+     * it will throw {@link external:TypeError TypeError} = `Values null/undefined cannot be used as raw text.`
+     *
+     * @param {boolean} [raw=false]
+     * Indicates when not to escape the resulting text.
+     *
+     * @returns {string}
+     *
+     * - `null` string, if the `value` resolves as `null` or `undefined`
+     * - escaped result of `value.toString()`, if the `value` isn't a string
+     * - escaped string version, if `value` is a string.
+     *
+     *  The result is not escaped, if `raw` was passed in as `true`.
+     */
+    text(value, raw) {
+        value = resolveFunc(value);
+        if (isNull(value)) {
+            throwIfRaw(raw);
+            return 'null';
+        }
+        if (typeof value !== 'string') {
+            value = value.toString();
+        }
+        return $to.text(value, raw);
+    },
+
+    /**
+     * @method formatting.name
+     * @description
+     * Properly escapes an sql name or identifier, fixing double-quote symbols and wrapping the result in double quotes.
+     *
+     * Implements a safe way to format $[SQL Names] that neutralizes SQL Injection.
+     *
+     * When formatting a query, a variable makes use of this method via modifier `:name` or `~`. See method {@link formatting.format format}.
+     *
+     * @param {string|function|array|object} name
+     * SQL name or identifier, or a function that returns it.
+     *
+     * The name must be at least 1 character long.
+     *
+     * If `name` doesn't resolve into a non-empty string, it throws {@link external:TypeError TypeError} = `Invalid sql name: ...`
+     *
+     * If the `name` contains only a single `*` (trailing spaces are ignored), then `name` is returned exactly as is (unescaped).
+     *
+     * - If `name` is an Array, it is formatted as a comma-separated list of $[SQL Names]
+     * - If `name` is a non-Array object, its keys are formatted as a comma-separated list of $[SQL Names]
+     *
+     * Passing in an empty array/object will throw {@link external:Error Error} = `Cannot retrieve sql names from an empty array/object.`
+     *
+     * @returns {string}
+     * The SQL Name/Identifier, properly escaped for compliance with the PostgreSQL standard for $[SQL Names] and identifiers.
+     *
+     * @see
+     * {@link formatting.alias alias},
+     * {@link formatting.format format}
+     *
+     * @example
+     *
+     * // automatically list object properties as sql names:
+     * format('INSERT INTO table(${this~}) VALUES(${one}, ${two})', {
+     *     one: 1,
+     *     two: 2
+     * });
+     * //=> INSERT INTO table("one","two") VALUES(1, 2)
+     *
+     */
+    name(name) {
+        name = resolveFunc(name);
+        if (name) {
+            if (typeof name === 'string') {
+                return /^\s*\*(\s*)$/.test(name) ? name : $formatSqlName(name);
+            }
+            if (typeof name === 'object') {
+                const keys = Array.isArray(name) ? name : Object.keys(name);
+                if (!keys.length) {
+                    throw new Error('Cannot retrieve sql names from an empty array/object.');
+                }
+                return keys.map(value => {
+                    if (!value || typeof value !== 'string') {
+                        throw new Error('Invalid sql name: ' + JSON.stringify(value));
+                    }
+                    return $formatSqlName(value);
+                }).join();
+            }
+        }
+        throw new TypeError('Invalid sql name: ' + JSON.stringify(name));
+    },
+
+    /**
+     * @method formatting.alias
+     * @description
+     * Simpler (non-verbose) version of method {@link formatting.name name}, to handle only a regular string-identifier
+     * that's used as an SQL alias, i.e. it doesn't support `*` or an array/object of names, which in the context of
+     * an SQL alias would be incorrect.
+     *
+     * The surrounding double quotes are not added when the alias uses a simple syntax:
+     *  - it is a same-case single word, without spaces
+     *  - it can contain underscores, and can even start with them
+     *  - it can contain digits and `$`, but cannot start with those
+     *
+     * When formatting a query, a variable makes use of this method via modifier `:alias`. See method {@link formatting.format format}.
+     *
+     * @param {string|function} name
+     * SQL alias name, or a function that returns it.
+     *
+     * The name must be at least 1 character long.
+     *
+     * If `name` doesn't resolve into a non-empty string, it throws {@link external:TypeError TypeError} = `Invalid sql alias: ...`
+     *
+     * @returns {string}
+     * The SQL alias, properly escaped for compliance with the PostgreSQL standard for $[SQL Names] and identifiers.
+     *
+     * @see
+     * {@link formatting.name name},
+     * {@link formatting.format format}
+     *
+     */
+    alias(name) {
+        name = resolveFunc(name);
+        if (name && typeof name === 'string') {
+            const m = name.match(/^([a-z_][a-z0-9_$]*|[A-Z_][A-Z0-9_$]*)$/);
+            if (m && m[0] === name) {
+                return name;
+            }
+            return '"' + name.replace(/"/g, '""') + '"';
+        }
+        throw new TypeError('Invalid sql alias: ' + JSON.stringify(name));
+    },
+
+    /**
+     * @method formatting.value
+     * @description
+     * Represents an open value, one to be formatted according to its type, properly escaped, but without surrounding quotes for text types.
+     *
+     * When formatting a query, a variable makes use of this method via modifier `:value` or `#`. See method {@link formatting.format format}.
+     *
+     * @param {value|function} value
+     * Value to be converted, or a function that returns the value.
+     *
+     * If `value` resolves as `null` or `undefined`, it will throw {@link external:TypeError TypeError} = `Open values cannot be null or undefined.`
+     *
+     * @returns {string}
+     * Formatted and properly escaped string, but without surrounding quotes for text types.
+     *
+     * @see {@link formatting.format format}
+     *
+     */
+    value(value) {
+        value = resolveFunc(value);
+        if (isNull(value)) {
+            throw new TypeError('Open values cannot be null or undefined.');
+        }
+        return safeText(formatValue(value, fmFlags.raw));
+    },
+
+    /**
+     * @method formatting.buffer
+     * @description
+     * Converts an object of type `Buffer` into a hex string compatible with PostgreSQL type `bytea`.
+     *
+     * @param {Buffer|function} obj
+     * Object to be converted, or a function that returns one.
+     *
+     * @param {boolean} [raw=false]
+     * Indicates when not to wrap the resulting string in quotes.
+     *
+     * The generated hex string doesn't need to be escaped.
+     *
+     * @returns {string}
+     */
+    buffer(obj, raw) {
+        obj = resolveFunc(obj);
+        if (isNull(obj)) {
+            throwIfRaw(raw);
+            return 'null';
+        }
+        if (obj instanceof Buffer) {
+            return $to.buffer(obj, raw);
+        }
+        throw new TypeError(wrapText(obj) + ' is not a Buffer object.');
+    },
+
+    /**
+     * @method formatting.bool
+     * @description
+     * Converts a truthy value into PostgreSQL boolean presentation.
+     *
+     * @param {boolean|function} value
+     * Value to be converted, or a function that returns the value.
+     *
+     * @returns {string}
+     */
+    bool(value) {
+        value = resolveFunc(value);
+        if (isNull(value)) {
+            return 'null';
+        }
+        return $to.bool(value);
+    },
+
+    /**
+     * @method formatting.date
+     * @description
+     * Converts a `Date`-type value into PostgreSQL date/time presentation,
+     * wrapped in quotes (unless flag `raw` is set).
+     *
+     * @param {Date|function} d
+     * Date object to be converted, or a function that returns one.
+     *
+     * @param {boolean} [raw=false]
+     * Indicates when not to escape the value.
+     *
+     * @returns {string}
+     */
+    date(d, raw) {
+        d = resolveFunc(d);
+        if (isNull(d)) {
+            throwIfRaw(raw);
+            return 'null';
+        }
+        if (d instanceof Date) {
+            return $to.date(d, raw);
+        }
+        throw new TypeError(wrapText(d) + ' is not a Date object.');
+    },
+
+    /**
+     * @method formatting.number
+     * @description
+     * Converts a numeric value into its PostgreSQL number presentation,
+     * with support for special values `NaN`, `+Infinity` and `-Infinity`.
+     *
+     * @param {number|function} num
+     * Number to be converted, or a function that returns one.
+     *
+     * @returns {string}
+     */
+    number(num) {
+        num = resolveFunc(num);
+        if (isNull(num)) {
+            return 'null';
+        }
+        if (typeof num !== 'number') {
+            throw new TypeError(wrapText(num) + ' is not a number.');
+        }
+        return $to.number(num);
+    },
+
+    /**
+     * @method formatting.array
+     * @description
+     * Converts an array of values into its PostgreSQL presentation as an Array-Type constructor string: `array[]`.
+     *
+     * Top-level empty arrays are formatted as literal `{}`, to avoid the necessity of explicit type casting,
+     * as the server cannot automatically infer type of an empty non-literal array.
+     *
+     * @param {Array|function} arr
+     * Array to be converted, or a function that returns one.
+     *
+     * @returns {string}
+     */
+    array(arr) {
+        arr = resolveFunc(arr);
+        if (isNull(arr)) {
+            return 'null';
+        }
+        if (arr instanceof Array) {
+            return $to.array(arr);
+        }
+        throw new TypeError(wrapText(arr) + ' is not an Array object.');
+    },
+
+    /**
+     * @method formatting.csv
+     * @description
+     * Converts a single value or an array of values into a CSV (comma-separated values) string, with all values formatted
+     * according to their JavaScript type.
+     *
+     * When formatting a query, a variable makes use of this method via modifier `:csv`, with alias `:list` supported from v7.5.1
+     *
+     * When `values` is an object that's not `null` or `Array`, its properties are enumerated for the actual values.
+     *
+     * @param {Array|Object|value|function} values
+     * Value(s) to be converted, or a function that returns it.
+     *
+     * @returns {string}
+     *
+     * @see {@link formatting.format format}
+     */
+    csv(values) {
+        return formatCSV(resolveFunc(values));
+    },
+
+    /**
+     * @method formatting.json
+     * @description
+     * Converts any value into JSON (using `JSON.stringify`), and returns it as a valid string, with single-quote
+     * symbols fixed, unless flag `raw` is set.
+     *
+     * When formatting a query, a variable makes use of this method via modifier `:json`. See method {@link formatting.format format}.
+     *
+     * @param {*} data
+     * Object/value to be converted, or a function that returns it.
+     *
+     * @param {boolean} [raw=false]
+     * Indicates when not to escape the result.
+     *
+     * @returns {string}
+     *
+     * @see {@link formatting.format format}
+     */
+    json(data, raw) {
+        data = resolveFunc(data);
+        if (isNull(data)) {
+            throwIfRaw(raw);
+            return 'null';
+        }
+        return $to.json(data, raw);
+    },
+
+    /**
+     * @method formatting.func
+     * @description
+     * Calls the function to get the actual value, and then formats the result
+     * according to its type + `raw` flag.
+     *
+     * @param {function} func
+     * Function to be called, with support for nesting.
+     *
+     * @param {boolean} [raw=false]
+     * Indicates when not to escape the result.
+     *
+     * @param {*} [cc]
+     * Calling Context: `this` + the only value to be passed into the function on all nested levels.
+     *
+     * @returns {string}
+     */
+    func(func, raw, cc) {
+        if (isNull(func)) {
+            throwIfRaw(raw);
+            return 'null';
+        }
+        if (typeof func !== 'function') {
+            throw new TypeError(wrapText(func) + ' is not a function.');
+        }
+        const fm = raw ? fmFlags.raw : null;
+        return formatValue(resolveFunc(func, cc), fm, cc);
+    },
+
+    /**
+     * @method formatting.format
+     * @description
+     * Replaces variables in a string according to the type of `values`:
+     *
+     * - Replaces `$1` occurrences when `values` is of type `string`, `boolean`, `number`, `Date`, `Buffer` or when it is `null`.
+     *
+     * - Replaces variables `$1`, `$2`, ...`$100000` when `values` is an array of parameters. It throws a {@link external:RangeError RangeError}
+     * when the values or variables are out of range.
+     *
+     * - Replaces `$*propName*`, where `*` is any of `{}`, `()`, `[]`, `<>`, `//`, when `values` is an object that's not a
+     * `Date`, `Buffer`, {@link QueryFile} or `null`. Special property name `this` refers to the formatting object itself,
+     *   to be injected as a JSON string. When referencing a property that doesn't exist in the formatting object, it throws
+     *   {@link external:Error Error} = `Property 'PropName' doesn't exist`, unless option `partial` is used.
+     *
+     * - Supports $[Nested Named Parameters] of any depth.
+     *
+     * By default, each variable is automatically formatted according to its type, unless it is a special variable:
+     *
+     * - Raw-text variables end with `:raw` or symbol `^`, and prevent escaping the text. Such variables are not
+     *   allowed to be `null` or `undefined`, or the method will throw {@link external:TypeError TypeError} = `Values null/undefined cannot be used as raw text.`
+     *   - `$1:raw`, `$2:raw`,..., and `$*propName:raw*` (see `*` above)
+     *   - `$1^`, `$2^`,..., and `$*propName^*` (see `*` above)
+     *
+     * - Open-value variables end with `:value` or symbol `#`, to be escaped, but not wrapped in quotes. Such variables are
+     *   not allowed to be `null` or `undefined`, or the method will throw {@link external:TypeError TypeError} = `Open values cannot be null or undefined.`
+     *   - `$1:value`, `$2:value`,..., and `$*propName:value*` (see `*` above)
+     *   - `$1#`, `$2#`,..., and `$*propName#*` (see `*` above)
+     *
+     * - SQL name variables end with `:name` or symbol `~` (tilde), and provide proper escaping for SQL names/identifiers:
+     *   - `$1:name`, `$2:name`,..., and `$*propName:name*` (see `*` above)
+     *   - `$1~`, `$2~`,..., and `$*propName~*` (see `*` above)
+     *
+     * - Modifier `:alias` - non-verbose $[SQL Names] escaping.
+     *
+     * - JSON override ends with `:json` to format the value of any type as a JSON string
+     *
+     * - CSV override ends with `:csv` or `:list` to format an array as a properly escaped comma-separated list of values.
+     *
+     * @param {string|QueryFile|object} query
+     * A query string, a {@link QueryFile} or any object that implements $[Custom Type Formatting], to be formatted according to `values`.
+     *
+     * @param {array|object|value} [values]
+     * Formatting parameter(s) / variable value(s).
+     *
+     * @param {object} [options]
+     * Formatting Options.
+     *
+     * @param {boolean} [options.partial=false]
+     * Indicates that we intend to do only a partial replacement, i.e. throw no error when encountering a variable or
+     * property name that's missing within the formatting parameters.
+     *
+     * This option has no meaning when option `default` is present.
+     *
+     * @param {*} [options.default]
+     * Sets a default value for every variable that's missing, consequently preventing errors when encountering a variable
+     * or property name that's missing within the formatting parameters.
+     *
+     * It can also be set to a function, to be called with two parameters that depend on the type of formatting being used,
+     * and to return the actual default value:
+     *
+     * - Named Parameters formatting:
+     *   - `name` - name of the property missing in the formatting object
+     *   - `obj` - the formatting object, and is the same as `this` context
+     *
+     * - Regular variable formatting:
+     *   - `index` - element's index that's outside of the formatting array's range
+     *   - `arr` - the formatting array, and is the same as `this` context
+     *
+     * @returns {string}
+     * Formatted query string.
+     *
+     * The function will throw an error, if any occurs during formatting.
+     */
+    format(query, values, options) {
+        const ctf = getCTF(query);
+        if (ctf) {
+            query = ctf.toPostgres.call(query, query);
+        }
+        return $formatQuery(query, values, false, options);
+    }
+};
+
+/* Pre-parsed type formatting */
+const $to = {
+    array(arr) {
+        return formatArray(arr);
+    },
+    bool(value) {
+        return value ? 'true' : 'false';
+    },
+    buffer(obj, raw) {
+        const s = '\\x' + obj.toString('hex');
+        return raw ? s : wrapText(s);
+    },
+    date(d, raw) {
+        const s = npm.pgUtils.prepareValue(d);
+        return raw ? s : wrapText(s);
+    },
+    json(data, raw) {
+        const s = JSON.stringify(data);
+        return raw ? s : wrapText(safeText(s));
+    },
+    number(num) {
+        if (Number.isFinite(num)) {
+            return num.toString();
+        }
+        // Converting NaN/+Infinity/-Infinity according to Postgres documentation:
+        // http://www.postgresql.org/docs/9.6/static/datatype-numeric.html#DATATYPE-FLOAT
+        //
+        // NOTE: strings for 'NaN'/'+Infinity'/'-Infinity' are not case-sensitive.
+        if (num === Number.POSITIVE_INFINITY) {
+            return wrapText('+Infinity');
+        }
+        if (num === Number.NEGATIVE_INFINITY) {
+            return wrapText('-Infinity');
+        }
+        return wrapText('NaN');
+    },
+    text(value, raw) {
+        return raw ? value : wrapText(safeText(value));
+    }
+};
+
+Object.freeze($as);
+
+module.exports = {
+    formatQuery: $formatQuery,
+    formatFunction: $formatFunction,
+    resolveFunc,
+    as: $as
+};
+
+/**
+ * @external Error
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error
+ */
+
+/**
+ * @external TypeError
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypeError
+ */
+
+/**
+ * @external RangeError
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RangeError
+ */
+
+/**
+ * @external Symbol
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol
+ */
+
+
+/***/ }),
 /* 4 */
 /***/ (function(module, exports) {
 
@@ -90,20 +1280,2000 @@ module.exports = require("path");
 module.exports = require("events");
 
 /***/ }),
-/* 6 */,
-/* 7 */,
-/* 8 */,
+/* 6 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+/* All error messages used in the module */
+
+module.exports = {
+    nativeError: 'Failed to initialize Native Bindings.',
+
+    /* Database errors */
+    queryDisconnected: 'Cannot execute a query on a disconnected client.',
+    invalidQuery: 'Invalid query format.',
+    invalidFunction: 'Invalid function name.',
+    invalidMask: 'Invalid Query Result Mask specified.',
+    looseQuery: 'Querying against a released or lost connection.',
+
+    /* result errors */
+    notEmpty: 'No return data was expected.',
+    noData: 'No data returned from the query.',
+    multiple: 'Multiple rows were not expected.',
+
+    /* streaming support */
+    nativeStreaming: 'Streaming doesn\'t work with Native Bindings.',
+    invalidStream: 'Invalid or missing stream object.',
+    invalidStreamState: 'Invalid stream state.',
+    invalidStreamCB: 'Invalid or missing stream initialization callback.',
+
+    /* connection errors */
+    poolDestroyed: 'Connection pool of the database object has been destroyed.',
+    clientEnd: 'Abnormal client.end() call, due to invalid code or failed server connection.'
+};
+
+
+/***/ }),
+/* 7 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var Writer = __webpack_require__(52);
+
+function getLocal() {
+    return new Writer();
+}
+
+var glb = new Writer();
+
+function getGlobal() {
+    console.log = function () {
+        glb.log.apply(glb, arguments);
+    };
+    console.error = function () {
+        glb.error.apply(glb, arguments);
+    };
+    console.warn = function () {
+        glb.warn.apply(glb, arguments);
+    };
+    console.info = function () {
+        glb.info.apply(glb, arguments);
+    };
+    console.success = function () {
+        glb.success.apply(glb, arguments);
+    };
+    console.ok = function () {
+        glb.ok.apply(glb, arguments);
+    };
+    return glb;
+}
+
+var exp = module.exports = new Writer(true);
+
+Object.defineProperty(exp, 'local', {
+    get: getLocal,
+    enumerable: true
+});
+
+Object.defineProperty(exp, 'global', {
+    get: getGlobal,
+    enumerable: true
+});
+
+Object.freeze(exp);
+
+
+/***/ }),
+/* 8 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var textParsers = __webpack_require__(56);
+var binaryParsers = __webpack_require__(61);
+var arrayParser = __webpack_require__(27);
+
+exports.getTypeParser = getTypeParser;
+exports.setTypeParser = setTypeParser;
+exports.arrayParser = arrayParser;
+
+var typeParsers = {
+  text: {},
+  binary: {}
+};
+
+//the empty parse function
+function noParse (val) {
+  return String(val);
+};
+
+//returns a function used to convert a specific type (specified by
+//oid) into a result javascript type
+//note: the oid can be obtained via the following sql query:
+//SELECT oid FROM pg_type WHERE typname = 'TYPE_NAME_HERE';
+function getTypeParser (oid, format) {
+  format = format || 'text';
+  if (!typeParsers[format]) {
+    return noParse;
+  }
+  return typeParsers[format][oid] || noParse;
+};
+
+function setTypeParser (oid, format, parseFn) {
+  if(typeof format == 'function') {
+    parseFn = format;
+    format = 'text';
+  }
+  typeParsers[format][oid] = parseFn;
+};
+
+textParsers.init(function(oid, converter) {
+  typeParsers.text[oid] = converter;
+});
+
+binaryParsers.init(function(oid, converter) {
+  typeParsers.binary[oid] = converter;
+});
+
+
+/***/ }),
 /* 9 */
 /***/ (function(module, exports) {
 
 module.exports = require("stream");
 
 /***/ }),
-/* 10 */,
-/* 11 */,
-/* 12 */,
-/* 13 */,
-/* 14 */,
+/* 10 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    fs: __webpack_require__(15),
+    os: __webpack_require__(2),
+    path: __webpack_require__(4),
+    con: __webpack_require__(7).local,
+    minify: __webpack_require__(21),
+    utils: __webpack_require__(0),
+    formatting: __webpack_require__(3),
+    QueryFileError: __webpack_require__(17)
+};
+
+/**
+ * @class QueryFile
+ * @description
+ *
+ * Represents an external SQL file. The type is available from the library's root: `pgp.QueryFile`.
+ *
+ * Reads a file with SQL and prepares it for execution, also parses and minifies it, if required.
+ * The SQL can be of any complexity, with both single and multi-line comments.
+ *
+ * The type can be used in place of the `query` parameter, with any query method directly, plus as `text` in {@link PreparedStatement}
+ * and {@link ParameterizedQuery}.
+ *
+ * It never throws any error, leaving it for query methods to reject with {@link errors.QueryFileError QueryFileError}.
+ *
+ * **IMPORTANT:** You should only create a single reusable object per file, in order to avoid repeated file reads,
+ * as the IO is a very expensive resource. If you do not follow it, you will be seeing the following warning:
+ * `Creating a duplicate QueryFile object for the same file`, which signals a bad-use pattern.
+ *
+ * @param {string} file
+ * Path to the SQL file with the query, either absolute or relative to the application's entry point file.
+ *
+ * If there is any problem reading the file, it will be reported when executing the query.
+ *
+ * @param {QueryFile.Options} [options]
+ * Set of configuration options, as documented by {@link QueryFile.Options}.
+ *
+ * @returns {QueryFile}
+ *
+ * @see
+ * {@link errors.QueryFileError QueryFileError},
+ * {@link utils}
+ *
+ * @example
+ * // File sql.js
+ *
+ * // Proper way to organize an sql provider:
+ * //
+ * // - have all sql files for Users in ./sql/users
+ * // - have all sql files for Products in ./sql/products
+ * // - have your sql provider module as ./sql/index.js
+ *
+ * const QueryFile = require('pg-promise').QueryFile;
+ * const path = require('path');
+ *
+ * // Helper for linking to external query files:
+ * function sql(file) {
+ *     const fullPath = path.join(__dirname, file); // generating full path;
+ *     return new QueryFile(fullPath, {minify: true});
+ * }
+ *
+ * module.exports = {
+ *     // external queries for Users:
+ *     users: {
+ *         add: sql('users/create.sql'),
+ *         search: sql('users/search.sql'),
+ *         report: sql('users/report.sql'),
+ *     },
+ *     // external queries for Products:
+ *     products: {
+ *         add: sql('products/add.sql'),
+ *         quote: sql('products/quote.sql'),
+ *         search: sql('products/search.sql'),
+ *     }
+ * };
+ *
+ * @example
+ * // Testing our SQL provider
+ *
+ * const db = require('./db'); // our database module;
+ * const sql = require('./sql').users; // our sql for users;
+ *
+ * module.exports = {
+ *     addUser: (name, age) => db.none(sql.add, [name, age]),
+ *     findUser: name => db.any(sql.search, name)
+ * };
+ *
+ */
+function QueryFile(file, options) {
+
+    if (!(this instanceof QueryFile)) {
+        return new QueryFile(file, options);
+    }
+
+    let sql, error, ready, modTime, after, filePath = file;
+
+    const opt = {
+        debug: npm.utils.isDev(),
+        minify: false,
+        compress: false,
+        noWarnings: false
+    };
+
+    if (options && typeof options === 'object') {
+        if (options.debug !== undefined) {
+            opt.debug = !!options.debug;
+        }
+        if (options.minify !== undefined) {
+            after = options.minify === 'after';
+            opt.minify = after ? 'after' : !!options.minify;
+        }
+        if (options.compress !== undefined) {
+            opt.compress = !!options.compress;
+        }
+        if (opt.compress && options.minify === undefined) {
+            opt.minify = true;
+        }
+        if (options.params !== undefined) {
+            opt.params = options.params;
+        }
+        if (options.noWarnings !== undefined) {
+            opt.noWarnings = !!options.noWarnings;
+        }
+    }
+
+    Object.freeze(opt);
+
+    if (npm.utils.isText(filePath) && !npm.utils.isPathAbsolute(filePath)) {
+        filePath = npm.path.join(npm.utils.startDir, filePath);
+    }
+
+    // istanbul ignore next:
+    if (!opt.noWarnings) {
+        if (filePath in usedPath) {
+            usedPath[filePath]++;
+            npm.con.warn('WARNING: Creating a duplicate QueryFile object for the same file - \n    %s\n%s\n', filePath, npm.utils.getLocalStack(3));
+        } else {
+            usedPath[filePath] = 0;
+        }
+    }
+
+    this[npm.formatting.as.ctf.rawType] = true; // do not format the content when used as a formatting value
+
+    /**
+     * @method QueryFile#prepare
+     * @summary Prepares the query for execution.
+     * @description
+     * If the query hasn't been prepared yet, it will read the file and process the content according
+     * to the parameters passed into the constructor.
+     *
+     * This method is primarily for internal use by the library.
+     *
+     * @param {boolean} [throwErrors=false]
+     * Throw any error encountered.
+     *
+     */
+    this.prepare = function (throwErrors) {
+        let lastMod;
+        if (opt.debug && ready) {
+            try {
+                lastMod = npm.fs.statSync(filePath).mtime.getTime();
+                if (lastMod === modTime) {
+                    // istanbul ignore next;
+                    // coverage for this works differently under Windows and Linux
+                    return;
+                }
+                ready = false;
+            } catch (e) {
+                sql = undefined;
+                ready = false;
+                error = e;
+                if (throwErrors) {
+                    throw error;
+                }
+                return;
+            }
+        }
+        if (ready) {
+            return;
+        }
+        try {
+            sql = npm.fs.readFileSync(filePath, 'utf8');
+            modTime = lastMod || npm.fs.statSync(filePath).mtime.getTime();
+            if (opt.minify && !after) {
+                sql = npm.minify(sql, {compress: opt.compress});
+            }
+            if (opt.params !== undefined) {
+                sql = npm.formatting.as.format(sql, opt.params, {partial: true});
+            }
+            if (opt.minify && after) {
+                sql = npm.minify(sql, {compress: opt.compress});
+            }
+            ready = true;
+            error = undefined;
+        } catch (e) {
+            sql = undefined;
+            error = new npm.QueryFileError(e, this);
+            if (throwErrors) {
+                throw error;
+            }
+        }
+    };
+
+    /**
+     * @name QueryFile#Symbol(QueryFile.$query)
+     * @type {string}
+     * @default undefined
+     * @readonly
+     * @private
+     * @summary Prepared query string.
+     * @description
+     * When property {@link QueryFile#error error} is set, the query is `undefined`.
+     *
+     * **IMPORTANT:** This property is for internal use by the library only, never use this
+     * property directly from your code.
+     */
+    Object.defineProperty(this, QueryFile.$query, {
+        get() {
+            return sql;
+        }
+    });
+
+    /**
+     * @name QueryFile#error
+     * @type {errors.QueryFileError}
+     * @default undefined
+     * @readonly
+     * @description
+     * When in an error state, it is set to a {@link errors.QueryFileError QueryFileError} object. Otherwise, it is `undefined`.
+     */
+    Object.defineProperty(this, 'error', {
+        get() {
+            return error;
+        }
+    });
+
+    /**
+     * @name QueryFile#file
+     * @type {string}
+     * @readonly
+     * @description
+     * File name that was passed into the constructor.
+     *
+     * This property is primarily for internal use by the library.
+     */
+    Object.defineProperty(this, 'file', {
+        get() {
+            return file;
+        }
+    });
+
+    /**
+     * @name QueryFile#options
+     * @type {QueryFile.Options}
+     * @readonly
+     * @description
+     * Set of options, as configured during the object's construction.
+     *
+     * This property is primarily for internal use by the library.
+     */
+    Object.defineProperty(this, 'options', {
+        get() {
+            return opt;
+        }
+    });
+
+    this.prepare();
+}
+
+// Hiding the query as a symbol within the type,
+// to make it even more difficult to misuse it:
+QueryFile.$query = Symbol('QueryFile.query');
+
+const usedPath = {};
+
+/**
+ * @method QueryFile#toPostgres
+ * @description
+ * $[Custom Type Formatting].
+ *
+ * @param {QueryFile} [self]
+ * Optional self-reference.
+ *
+ * @returns {string}
+ */
+QueryFile.prototype[npm.formatting.as.ctf.toPostgres] = function (self) {
+    self = this || self;
+    self.prepare(true);
+    return self[QueryFile.$query];
+};
+
+/**
+ * @method QueryFile#toString
+ * @description
+ * Creates a well-formatted multi-line string that represents the object's current state.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * @param {number} [level=0]
+ * Nested output level, to provide visual offset.
+ *
+ * @returns {string}
+ */
+QueryFile.prototype.toString = function (level) {
+    level = level > 0 ? parseInt(level) : 0;
+    const gap = npm.utils.messageGap(level + 1);
+    const lines = [
+        'QueryFile {'
+    ];
+    this.prepare();
+    lines.push(gap + 'file: "' + this.file + '"');
+    lines.push(gap + 'options: ' + JSON.stringify(this.options));
+    if (this.error) {
+        lines.push(gap + 'error: ' + this.error.toString(level + 1));
+    } else {
+        lines.push(gap + 'query: "' + this[QueryFile.$query] + '"');
+    }
+    lines.push(npm.utils.messageGap(level) + '}');
+    return lines.join(npm.os.EOL);
+};
+
+npm.utils.addInspection(QueryFile, function () {
+    return this.toString();
+});
+
+module.exports = QueryFile;
+
+/**
+ * @typedef QueryFile.Options
+ * @description
+ * A set of configuration options as passed into the {@link QueryFile} constructor.
+ *
+ * @property {boolean} debug
+ * When in debug mode, the query file is checked for its last modification time on every query request,
+ * so if it changes, the file is read afresh.
+ *
+ * The default for this property is `true` when `NODE_ENV` = `development`,
+ * or `false` otherwise.
+ *
+ * @property {boolean|string} minify=false
+ * Parses and minifies the SQL using $[pg-minify]:
+ * - `false` - do not use $[pg-minify]
+ * - `true` - use $[pg-minify] to parse and minify SQL
+ * - `'after'` - use $[pg-minify] after applying static formatting parameters
+ *   (option `params`), as opposed to before it (default)
+ *
+ * If option `compress` is set, then the default for `minify` is `true`.
+ *
+ * Failure to parse SQL will result in $[SQLParsingError].
+ *
+ * @property {boolean} compress=false
+ * Sets option `compress` as supported by $[pg-minify], to uglify the SQL:
+ * - `false` - no compression to be applied, keep minimum spaces for easier read
+ * - `true` - remove all unnecessary spaces from SQL
+ *
+ * This option has no meaning, if `minify` is explicitly set to `false`. However, if `minify` is not
+ * specified and `compress` is specified as `true`, then `minify` defaults to `true`.
+ *
+ * @property {array|object|value} params
+ *
+ * Static formatting parameters to be applied to the SQL, using the same method {@link formatting.format as.format},
+ * but with option `partial` = `true`.
+ *
+ * Most of the time query formatting is fully dynamic, and applied just before executing the query.
+ * In some cases though you may need to pre-format SQL with static values. Examples of it can be a
+ * schema name, or a configurable table name.
+ *
+ * This option makes two-step SQL formatting easy: you can pre-format the SQL initially, and then
+ * apply the second-step dynamic formatting when executing the query.
+ *
+ * @property {boolean} noWarnings=false
+ * Suppresses all warnings produced by the class. It is not recommended for general use, only in specific tests
+ * that may require it.
+ *
+ */
+
+
+/***/ }),
+/* 11 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    os: __webpack_require__(2),
+    utils: __webpack_require__(0),
+    formatting: __webpack_require__(3),
+    TableName: __webpack_require__(18),
+    Column: __webpack_require__(36)
+};
+
+/**
+ * @class helpers.ColumnSet
+ * @description
+ *
+ * Performance-optimized, read-only structure with query-formatting columns.
+ *
+ * For performance-oriented applications this type should be created globally/statically, to be reused by all methods.
+ *
+ * @param {object|helpers.Column|array} columns
+ * Columns information object, depending on the type:
+ *
+ * - When it is a simple object, its properties are enumerated to represent both column names and property names
+ *   within the source objects. See also option `inherit` that's applicable in this case.
+ *
+ * - When it is a single {@link helpers.Column Column} object, property {@link helpers.ColumnSet#columns columns} is initialized with
+ *   just a single column. It is not a unique situation when only a single column is required for an update operation.
+ *
+ * - When it is an array, each element is assumed to represent details for a column. If the element is already of type {@link helpers.Column Column},
+ *   it is used directly; otherwise the element is passed into {@link helpers.Column Column} constructor for initialization.
+ *   On any duplicate column name (case-sensitive) it will throw {@link external:Error Error} = `Duplicate column name "name".`
+ *
+ * - When it is none of the above, it will throw {@link external:TypeError TypeError} = `Invalid parameter 'columns' specified.`
+ *
+ * @param {object} [options]
+ *
+ * @param {helpers.TableName|string|{table,schema}} [options.table]
+ * Table details.
+ *
+ * When it is a non-null value, and not a {@link helpers.TableName TableName} object, a new {@link helpers.TableName TableName} is constructed from the value.
+ *
+ * It can be used as the default for methods {@link helpers.insert insert} and {@link helpers.update update} when their parameter
+ * `table` is omitted, and for logging purposes.
+ *
+ * @param {boolean} [options.inherit = false]
+ * Use inherited properties in addition to the object's own properties.
+ *
+ * By default, only the object's own properties are enumerated for column names.
+ *
+ * @returns {helpers.ColumnSet}
+ *
+ * @see
+ *
+ * {@link helpers.ColumnSet#columns columns},
+ * {@link helpers.ColumnSet#names names},
+ * {@link helpers.ColumnSet#table table},
+ * {@link helpers.ColumnSet#variables variables} |
+ * {@link helpers.ColumnSet#assign assign},
+ * {@link helpers.ColumnSet#assignColumns assignColumns},
+ * {@link helpers.ColumnSet#extend extend},
+ * {@link helpers.ColumnSet#merge merge},
+ * {@link helpers.ColumnSet#prepare prepare}
+ *
+ * @example
+ *
+ * // A complex insert/update object scenario for table 'purchases' in schema 'fiscal'.
+ * // For a good performance, you should declare such objects once and then reuse them.
+ * //
+ * // Column Requirements:
+ * //
+ * // 1. Property 'id' is only to be used for a WHERE condition in updates
+ * // 2. Property 'list' needs to be formatted as a csv
+ * // 3. Property 'code' is to be used as raw text, and to be defaulted to 0 when the
+ * //    property is missing in the source object
+ * // 4. Property 'log' is a JSON object with 'log-entry' for the column name
+ * // 5. Property 'data' requires SQL type casting '::int[]'
+ * // 6. Property 'amount' needs to be set to 100, if it is 0
+ * // 7. Property 'total' must be skipped during updates, if 'amount' was 0, plus its
+ * //    column name is 'total-val'
+ *
+ * const cs = new pgp.helpers.ColumnSet([
+ *     '?id', // ColumnConfig equivalent: {name: 'id', cnd: true}
+ *     'list:csv', // ColumnConfig equivalent: {name: 'list', mod: ':csv'}
+ *     {
+ *         name: 'code',
+ *         mod: '^', // format as raw text
+ *         def: 0 // default to 0 when the property doesn't exist
+ *     },
+ *     {
+ *         name: 'log-entry',
+ *         prop: 'log',
+ *         mod: ':json' // format as JSON
+ *     },
+ *     {
+ *         name: 'data',
+ *         cast: 'int[]' // use SQL type casting '::int[]'
+ *     },
+ *     {
+ *         name: 'amount',
+ *         init: col => {
+ *             // set to 100, if the value is 0:
+ *             return col.value === 0 ? 100 : col.value;
+ *         }
+ *     },
+ *     {
+ *         name: 'total-val',
+ *         prop: 'total',
+ *         skip: col => {
+ *             // skip from updates, if 'amount' is 0:
+ *             return col.source.amount === 0;
+ *         }
+ *     }
+ * ], {table: {table: 'purchases', schema: 'fiscal'}});
+ *
+ * // Alternatively, you could take the table declaration out:
+ * // const table = new pgp.helpers.TableName('purchases', 'fiscal');
+ *
+ * console.log(cs); // console output for the object:
+ * //=>
+ * // ColumnSet {
+ * //    table: "fiscal"."purchases"
+ * //    columns: [
+ * //        Column {
+ * //            name: "id"
+ * //            cnd: true
+ * //        }
+ * //        Column {
+ * //            name: "list"
+ * //            mod: ":csv"
+ * //        }
+ * //        Column {
+ * //            name: "code"
+ * //            mod: "^"
+ * //            def: 0
+ * //        }
+ * //        Column {
+ * //            name: "log-entry"
+ * //            prop: "log"
+ * //            mod: ":json"
+ * //        }
+ * //        Column {
+ * //            name: "data"
+ * //            cast: "int[]"
+ * //        }
+ * //        Column {
+ * //            name: "amount"
+ * //            init: [Function]
+ * //        }
+ * //        Column {
+ * //            name: "total-val"
+ * //            prop: "total"
+ * //            skip: [Function]
+ * //        }
+ * //    ]
+ * // }
+ */
+function ColumnSet(columns, options) {
+
+    if (!(this instanceof ColumnSet)) {
+        return new ColumnSet(columns, options);
+    }
+
+    if (!columns || typeof columns !== 'object') {
+        throw new TypeError('Invalid parameter \'columns\' specified.');
+    }
+
+    let inherit, names, variables, updates, isSimple = true;
+
+    if (!npm.utils.isNull(options)) {
+        if (typeof options !== 'object') {
+            throw new TypeError('Invalid parameter \'options\' specified.');
+        }
+        if (!npm.utils.isNull(options.table)) {
+            if (options.table instanceof npm.TableName) {
+                this.table = options.table;
+            } else {
+                this.table = new npm.TableName(options.table);
+            }
+        }
+        inherit = options.inherit;
+    }
+
+    /**
+     * @name helpers.ColumnSet#table
+     * @type {helpers.TableName}
+     * @readonly
+     * @description
+     * Destination table. It can be specified for two purposes:
+     *
+     * - **primary:** to be used as the default table when it is omitted during a call into methods {@link helpers.insert insert} and {@link helpers.update update}
+     * - **secondary:** to be automatically written into the console (for logging purposes).
+     */
+
+
+    /**
+     * @name helpers.ColumnSet#columns
+     * @type helpers.Column[]
+     * @readonly
+     * @description
+     * Array of {@link helpers.Column Column} objects.
+     */
+    if (Array.isArray(columns)) {
+        const colNames = {};
+        this.columns = columns.map(c => {
+            const col = (c instanceof npm.Column) ? c : new npm.Column(c);
+            if (col.name in colNames) {
+                throw new Error('Duplicate column name "' + col.name + '".');
+            }
+            colNames[col.name] = true;
+            return col;
+        });
+    } else {
+        if (columns instanceof npm.Column) {
+            this.columns = [columns];
+        } else {
+            this.columns = [];
+            for (const name in columns) {
+                if (inherit || Object.prototype.hasOwnProperty.call(columns, name)) {
+                    this.columns.push(new npm.Column(name));
+                }
+            }
+        }
+    }
+
+    Object.freeze(this.columns);
+
+    for (let i = 0; i < this.columns.length; i++) {
+        const c = this.columns[i];
+        // ColumnSet is simple when the source objects require no preparation,
+        // and should be used directly:
+        if (c.prop || c.init || 'def' in c) {
+            isSimple = false;
+            break;
+        }
+    }
+
+    /**
+     * @name helpers.ColumnSet#names
+     * @type string
+     * @readonly
+     * @description
+     * Returns a string - comma-separated list of all column names, properly escaped.
+     *
+     * @example
+     * const cs = new ColumnSet(['id^', {name: 'cells', cast: 'int[]'}, 'doc:json']);
+     * console.log(cs.names);
+     * //=> "id","cells","doc"
+     */
+    Object.defineProperty(this, 'names', {
+        get() {
+            if (!names) {
+                names = this.columns.map(c => c.escapedName).join();
+            }
+            return names;
+        }
+    });
+
+    /**
+     * @name helpers.ColumnSet#variables
+     * @type string
+     * @readonly
+     * @description
+     * Returns a string - formatting template for all column values.
+     *
+     * @see {@link helpers.ColumnSet#assign assign}
+     *
+     * @example
+     * const cs = new ColumnSet(['id^', {name: 'cells', cast: 'int[]'}, 'doc:json']);
+     * console.log(cs.variables);
+     * //=> ${id^},${cells}::int[],${doc:json}
+     */
+    Object.defineProperty(this, 'variables', {
+        get() {
+            if (!variables) {
+                variables = this.columns.map(c => c.variable + c.castText).join();
+            }
+            return variables;
+        }
+    });
+
+    /**
+     * @method helpers.ColumnSet#assign
+     * @description
+     * Returns a formatting template of SET assignments, either generic or for a single object.
+     *
+     * The method is optimized to cache the output string when there are no columns that can be skipped dynamically.
+     *
+     * This method is primarily for internal use, that's why it does not validate the input.
+     *
+     * @param {object} [options]
+     * Assignment/formatting options.
+     *
+     * @param {object} [options.source]
+     * Source - a single object that contains values for columns.
+     *
+     * The object is only necessary to correctly apply the logic of skipping columns dynamically, based on the source data
+     * and the rules defined in the {@link helpers.ColumnSet ColumnSet}. If, however, you do not care about that, then you do not need to specify any object.
+     *
+     * Note that even if you do not specify the object, the columns marked as conditional (`cnd: true`) will always be skipped.
+     *
+     * @param {string} [options.prefix]
+     * In cases where needed, an alias prefix to be added before each column.
+     *
+     * @returns {string}
+     * Comma-separated list of variable-to-column assignments.
+     *
+     * @see {@link helpers.ColumnSet#variables variables}
+     *
+     * @example
+     *
+     * const cs = new pgp.helpers.ColumnSet([
+     *     '?first', // = {name: 'first', cnd: true}
+     *     'second:json',
+     *     {name: 'third', mod: ':raw', cast: 'text'}
+     * ]);
+     *
+     * cs.assign();
+     * //=> "second"=${second:json},"third"=${third:raw}::text
+     *
+     * cs.assign({prefix: 'a b c'});
+     * //=> "a b c"."second"=${second:json},"a b c"."third"=${third:raw}::text
+     */
+    this.assign = options => {
+        const hasPrefix = options && options.prefix && typeof options.prefix === 'string';
+        if (updates && !hasPrefix) {
+            return updates;
+        }
+        let dynamic = hasPrefix;
+        const hasSource = options && options.source && typeof options.source === 'object';
+        let list = this.columns.filter(c => {
+            if (c.cnd) {
+                return false;
+            }
+            if (c.skip) {
+                dynamic = true;
+                if (hasSource) {
+                    const a = colDesc(c, options.source);
+                    if (c.skip.call(options.source, a)) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        });
+
+        const prefix = hasPrefix ? npm.formatting.as.alias(options.prefix) + '.' : '';
+        list = list.map(c => prefix + c.escapedName + '=' + c.variable + c.castText).join();
+
+        if (!dynamic) {
+            updates = list;
+        }
+        return list;
+    };
+
+    /**
+     * @method helpers.ColumnSet#assignColumns
+     * @description
+     * Generates assignments for all columns in the set, with support for aliases and column-skipping logic.
+     * Aliases are set by using method {@link formatting.alias as.alias}.
+     *
+     * @param {Object} [options]
+     * Optional Parameters.
+     *
+     * @param {string} [options.from]
+     * Alias for the source columns.
+     *
+     * @param {string} [options.to]
+     * Alias for the destination columns.
+     *
+     * @param {string | Array<string> | function} [options.skip]
+     * Name(s) of the column(s) to be skipped (case-sensitive). It can be either a single string or an array of strings.
+     *
+     * It can also be a function - iterator, to be called for every column, passing in {@link helpers.Column Column} as
+     * `this` context, and plus as a single parameter. The function would return a truthy value for every column that needs to be skipped.
+     *
+     * @returns {string}
+     * A string of comma-separated column assignments.
+     *
+     * @example
+     *
+     * const cs = new pgp.helpers.ColumnSet(['id', 'city', 'street']);
+     *
+     * cs.assignColumns({from: 'EXCLUDED', skip: 'id'})
+     * //=> "city"=EXCLUDED."city","street"=EXCLUDED."street"
+     *
+     * @example
+     *
+     * const cs = new pgp.helpers.ColumnSet(['?id', 'city', 'street']);
+     *
+     * cs.assignColumns({from: 'source', to: 'target', skip: c => c.cnd})
+     * //=> target."city"=source."city",target."street"=source."street"
+     *
+     */
+    this.assignColumns = options => {
+        const skip = options && ((typeof options.skip === 'string' && [options.skip]) || ((Array.isArray(options.skip) || typeof options.skip === 'function') && options.skip));
+        const from = (options && typeof options.from === 'string' && options.from && (npm.formatting.as.alias(options.from) + '.')) || '';
+        const to = (options && typeof options.to === 'string' && options.to && (npm.formatting.as.alias(options.to) + '.')) || '';
+        const iterator = typeof skip === 'function' ? c => !skip.call(c, c) : c => skip.indexOf(c.name) === -1;
+        const cols = skip ? this.columns.filter(iterator) : this.columns;
+        return cols.map(c => to + c.escapedName + '=' + from + c.escapedName).join();
+    };
+
+    /**
+     * @method helpers.ColumnSet#extend
+     * @description
+     * Creates a new {@link helpers.ColumnSet ColumnSet}, by joining the two sets of columns.
+     *
+     * If the two sets contain a column with the same `name` (case-sensitive), an error is thrown.
+     *
+     * @param {helpers.Column|helpers.ColumnSet|array} columns
+     * Columns to be appended, of the same type as parameter `columns` during {@link helpers.ColumnSet ColumnSet} construction, except:
+     * - it can also be of type {@link helpers.ColumnSet ColumnSet}
+     * - it cannot be a simple object (properties enumeration is not supported here)
+     *
+     * @returns {helpers.ColumnSet}
+     * New {@link helpers.ColumnSet ColumnSet} object with the extended/concatenated list of columns.
+     *
+     * @see
+     * {@link helpers.Column Column},
+     * {@link helpers.ColumnSet#merge merge}
+     *
+     * @example
+     *
+     * const pgp = require('pg-promise')();
+     *
+     * const cs = new pgp.helpers.ColumnSet(['one', 'two'], {table: 'my-table'});
+     * console.log(cs);
+     * //=>
+     * // ColumnSet {
+     * //    table: "my-table"
+     * //    columns: [
+     * //        Column {
+     * //            name: "one"
+     * //        }
+     * //        Column {
+     * //            name: "two"
+     * //        }
+     * //    ]
+     * // }
+     * const csExtended = cs.extend(['three']);
+     * console.log(csExtended);
+     * //=>
+     * // ColumnSet {
+     * //    table: "my-table"
+     * //    columns: [
+     * //        Column {
+     * //            name: "one"
+     * //        }
+     * //        Column {
+     * //            name: "two"
+     * //        }
+     * //        Column {
+     * //            name: "three"
+     * //        }
+     * //    ]
+     * // }
+     */
+    this.extend = columns => {
+        let cs = columns;
+        if (!(cs instanceof ColumnSet)) {
+            cs = new ColumnSet(columns);
+        }
+        // Any duplicate column will throw Error = 'Duplicate column name "name".',
+        return new ColumnSet(this.columns.concat(cs.columns), {table: this.table});
+    };
+
+    /**
+     * @method helpers.ColumnSet#merge
+     * @description
+     * Creates a new {@link helpers.ColumnSet ColumnSet}, by joining the two sets of columns.
+     *
+     * Items in `columns` with the same `name` (case-sensitive) override the original columns.
+     *
+     * @param {helpers.Column|helpers.ColumnSet|array} columns
+     * Columns to be appended, of the same type as parameter `columns` during {@link helpers.ColumnSet ColumnSet} construction, except:
+     * - it can also be of type {@link helpers.ColumnSet ColumnSet}
+     * - it cannot be a simple object (properties enumeration is not supported here)
+     *
+     * @see
+     * {@link helpers.Column Column},
+     * {@link helpers.ColumnSet#extend extend}
+     *
+     * @returns {helpers.ColumnSet}
+     * New {@link helpers.ColumnSet ColumnSet} object with the merged list of columns.
+     *
+     * @example
+     *
+     * const pgp = require('pg-promise')();
+     *
+     * const cs = new pgp.helpers.ColumnSet(['?one', 'two:json'], {table: 'my-table'});
+     * console.log(cs);
+     * //=>
+     * // ColumnSet {
+     * //    table: "my-table"
+     * //    columns: [
+     * //        Column {
+     * //            name: "one"
+     * //            cnd: true
+     * //        }
+     * //        Column {
+     * //            name: "two"
+     * //            mod: ":json"
+     * //        }
+     * //    ]
+     * // }
+     * const csMerged = cs.merge(['two', 'three^']);
+     * console.log(csMerged);
+     * //=>
+     * // ColumnSet {
+     * //    table: "my-table"
+     * //    columns: [
+     * //        Column {
+     * //            name: "one"
+     * //            cnd: true
+     * //        }
+     * //        Column {
+     * //            name: "two"
+     * //        }
+     * //        Column {
+     * //            name: "three"
+     * //            mod: "^"
+     * //        }
+     * //    ]
+     * // }
+     *
+     */
+    this.merge = columns => {
+        let cs = columns;
+        if (!(cs instanceof ColumnSet)) {
+            cs = new ColumnSet(columns);
+        }
+        const colNames = {}, cols = [];
+        this.columns.forEach((c, idx) => {
+            cols.push(c);
+            colNames[c.name] = idx;
+        });
+        cs.columns.forEach(c => {
+            if (c.name in colNames) {
+                cols[colNames[c.name]] = c;
+            } else {
+                cols.push(c);
+            }
+        });
+        return new ColumnSet(cols, {table: this.table});
+    };
+
+    /**
+     * @method helpers.ColumnSet#prepare
+     * @description
+     * Prepares a source object to be formatted, by cloning it and applying the rules as set by the
+     * columns configuration.
+     *
+     * This method is primarily for internal use, that's why it does not validate the input parameters.
+     *
+     * @param {object} source
+     * The source object to be prepared, if required.
+     *
+     * It must be a non-`null` object, which the method does not validate, as it is
+     * intended primarily for internal use by the library.
+     *
+     * @returns {object}
+     * When the object needs to be prepared, the method returns a clone of the source object,
+     * with all properties and values set according to the columns configuration.
+     *
+     * When the object does not need to be prepared, the original object is returned.
+     */
+    this.prepare = source => {
+        if (isSimple) {
+            return source; // a simple ColumnSet requires no object preparation;
+        }
+        const target = {};
+        this.columns.forEach(c => {
+            const a = colDesc(c, source);
+            if (c.init) {
+                target[a.name] = c.init.call(source, a);
+            } else {
+                if (a.exists || 'def' in c) {
+                    target[a.name] = a.value;
+                }
+            }
+        });
+        return target;
+    };
+
+    Object.freeze(this);
+
+    function colDesc(column, source) {
+        const a = {
+            source,
+            name: column.prop || column.name
+        };
+        a.exists = a.name in source;
+        if (a.exists) {
+            a.value = source[a.name];
+        } else {
+            a.value = 'def' in column ? column.def : undefined;
+        }
+        return a;
+    }
+}
+
+/**
+ * @method helpers.ColumnSet#toString
+ * @description
+ * Creates a well-formatted multi-line string that represents the object.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * @param {number} [level=0]
+ * Nested output level, to provide visual offset.
+ *
+ * @returns {string}
+ */
+ColumnSet.prototype.toString = function (level) {
+    level = level > 0 ? parseInt(level) : 0;
+    const gap0 = npm.utils.messageGap(level),
+        gap1 = npm.utils.messageGap(level + 1),
+        lines = [
+            'ColumnSet {'
+        ];
+    if (this.table) {
+        lines.push(gap1 + 'table: ' + this.table);
+    }
+    if (this.columns.length) {
+        lines.push(gap1 + 'columns: [');
+        this.columns.forEach(c => {
+            lines.push(c.toString(2));
+        });
+        lines.push(gap1 + ']');
+    } else {
+        lines.push(gap1 + 'columns: []');
+    }
+    lines.push(gap0 + '}');
+    return lines.join(npm.os.EOL);
+};
+
+npm.utils.addInspection(ColumnSet, function () {
+    return this.toString();
+});
+
+module.exports = ColumnSet;
+
+
+/***/ }),
+/* 12 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    con: __webpack_require__(7).local,
+    main: __webpack_require__(24),
+    utils: __webpack_require__(0)
+};
+
+/////////////////////////////////
+// Client notification helpers;
+const $events = {
+
+    /**
+     * @event connect
+     * @description
+     * **Updated in v8.4.0**
+     *
+     * Global notification of acquiring a new database connection from the connection pool, i.e. a virtual connection.
+     *
+     * However, for direct calls to method {@link Database#connect Database.connect} with parameter `{direct: true}`,
+     * this event represents a physical connection.
+     *
+     * The library will suppress any error thrown by the handler and write it into the console.
+     *
+     * @param {external:Client} client
+     * $[pg.Client] object that represents the connection.
+     *
+     * @param {*} dc
+     * Database Context that was used when creating the database object (see {@link Database}).
+     *
+     * @param {number} useCount
+     * Number of times the connection has been previously used, starting with 0 for a freshly
+     * allocated physical connection.
+     *
+     * This parameter is always 0 for direct connections (created by calling {@link Database#connect Database.connect}
+     * with parameter `{direct: true}`).
+     *
+     * @example
+     *
+     * const initOptions = {
+     *
+     *     // pg-promise initialization options...
+     *
+     *     connect(client, dc, useCount) {
+     *         const cp = client.connectionParameters;
+     *         console.log('Connected to database:', cp.database);
+     *     }
+     *
+     * };
+     */
+    connect(ctx, client, useCount) {
+        if (typeof ctx.options.connect === 'function') {
+            try {
+                ctx.options.connect(client, ctx.dc, useCount);
+            } catch (e) {
+                // have to silence errors here;
+                // cannot allow unhandled errors while connecting to the database,
+                // as it will break the connection logic;
+                $events.unexpected('connect', e);
+            }
+        }
+    },
+
+    /**
+     * @event disconnect
+     * @description
+     * Global notification of releasing a database connection back to the connection pool, i.e. releasing the virtual connection.
+     *
+     * However, when releasing a direct connection (created by calling {@link Database#connect Database.connect} with parameter
+     * `{direct: true}`), this event represents a physical disconnection.
+     *
+     * The library will suppress any error thrown by the handler and write it into the console.
+     *
+     * @param {external:Client} client - $[pg.Client] object that represents connection with the database.
+     *
+     * @param {*} dc - Database Context that was used when creating the database object (see {@link Database}).
+     *
+     * @example
+     *
+     * const initOptions = {
+     *
+     *     // pg-promise initialization options...
+     *
+     *     disconnect(client, dc) {
+     *        const cp = client.connectionParameters;
+     *        console.log('Disconnecting from database:', cp.database);
+     *     }
+     *
+     * };
+     */
+    disconnect(ctx, client) {
+        if (typeof ctx.options.disconnect === 'function') {
+            try {
+                ctx.options.disconnect(client, ctx.dc);
+            } catch (e) {
+                // have to silence errors here;
+                // cannot allow unhandled errors while disconnecting from the database,
+                // as it will break the disconnection logic;
+                $events.unexpected('disconnect', e);
+            }
+        }
+    },
+
+    /**
+     * @event query
+     * @description
+     *
+     * Global notification of a query that's about to execute.
+     *
+     * Notification happens just before the query execution. And if the handler throws an error, the query execution
+     * will be rejected with that error.
+     *
+     * @param {EventContext} e
+     * Event Context Object.
+     *
+     * @example
+     *
+     * const initOptions = {
+     *
+     *     // pg-promise initialization options...
+     *
+     *     query(e) {
+     *         console.log('QUERY:', e.query);
+     *     }
+     * };
+     */
+    query(options, context) {
+        if (typeof options.query === 'function') {
+            try {
+                options.query(context);
+            } catch (e) {
+                // throwing an error during event 'query'
+                // will result in a reject for the request.
+                return e instanceof Error ? e : new npm.utils.InternalError(e);
+            }
+        }
+    },
+
+    /**
+     * @event receive
+     * @description
+     * Global notification of any data received from the database, coming from a regular query or from a stream.
+     *
+     * The event is fired before the data reaches the client, and it serves two purposes:
+     *  - Providing selective data logging for debugging;
+     *  - Pre-processing data before it reaches the client.
+     *
+     * **NOTES:**
+     * - If you alter the size of `data` directly or through the `result` object, it may affect `QueryResultMask`
+     *   validation for regular queries, which is executed right after.
+     * - Any data pre-processing needs to be fast here, to avoid performance penalties.
+     * - If the event handler throws an error, the original request will be rejected with that error.
+     *
+     * For methods {@link Database#multi Database.multi} and {@link Database#multiResult Database.multiResult},
+     * this event is called for every result that's returned.
+     *
+     * @param {Array<Object>} data
+     * Array of received objects/rows.
+     *
+     * If any of those objects are modified during notification, the client will receive the modified data.
+     *
+     * For method {@link Database#stream Database.stream}, the maximum number of rows equals the `batchSize`
+     * value within the $[QueryStream] object.
+     *
+     * @param {external:Result} result
+     * - Original $[Result] object, if the data is from a non-stream query, in which case `data = result.rows`.
+     *   For single-query requests, $[Result] object is extended with property `duration` - number of milliseconds
+     *   it took to send the query, execute it and get the result back.
+     * - It is `undefined` when the data comes from a stream (method {@link Database#stream Database.stream}).
+     *
+     * @param {EventContext} e
+     * Event Context Object.
+     *
+     * @example
+     *
+     * // Example below shows the fastest way to camelize all column names.
+     * // NOTE: The example does not do processing for nested JSON objects.
+     *
+     * const initOptions = {
+     *
+     *     // pg-promise initialization options...
+     *
+     *     receive(data, result, e) {
+     *         camelizeColumns(data);
+     *     }
+     * };
+     *
+     * function camelizeColumns(data) {
+     *     const tmp = data[0];
+     *     for (const prop in tmp) {
+     *         const camel = pgp.utils.camelize(prop);
+     *         if (!(camel in tmp)) {
+     *             for (let i = 0; i < data.length; i++) {
+     *                 const d = data[i];
+     *                 d[camel] = d[prop];
+     *                 delete d[prop];
+     *             }
+     *         }
+     *     }
+     * }
+     */
+    receive(options, data, result, context) {
+        if (typeof options.receive === 'function') {
+            try {
+                options.receive(data, result, context);
+            } catch (e) {
+                // throwing an error during event 'receive'
+                // will result in a reject for the request.
+                return e instanceof Error ? e : new npm.utils.InternalError(e);
+            }
+        }
+    },
+
+    /**
+     * @event task
+     * @description
+     * Global notification of a task start / finish events, as executed via
+     * {@link Database#task Database.task} or {@link Database#taskIf Database.taskIf}.
+     *
+     * The library will suppress any error thrown by the handler and write it into the console.
+     *
+     * @param {EventContext} e
+     * Event Context Object.
+     *
+     * @example
+     *
+     * const initOptions = {
+     *
+     *     // pg-promise initialization options...
+     *
+     *     task(e) {
+     *         if (e.ctx.finish) {
+     *             // this is a task->finish event;
+     *             console.log('Duration:', e.ctx.duration);
+     *             if (e.ctx.success) {
+     *                 // e.ctx.result = resolved data;
+     *             } else {
+     *                 // e.ctx.result = error/rejection reason;
+     *             }
+     *         } else {
+     *             // this is a task->start event;
+     *             console.log('Start Time:', e.ctx.start);
+     *         }
+     *     }
+     * };
+     *
+     */
+    task(options, context) {
+        if (typeof options.task === 'function') {
+            try {
+                options.task(context);
+            } catch (e) {
+                // silencing the error, to avoid breaking the task;
+                $events.unexpected('task', e);
+            }
+        }
+    },
+
+    /**
+     * @event transact
+     * @description
+     * Global notification of a transaction start / finish events, as executed via {@link Database#tx Database.tx}
+     * or {@link Database#txIf Database.txIf}.
+     *
+     * The library will suppress any error thrown by the handler and write it into the console.
+     *
+     * @param {EventContext} e
+     * Event Context Object.
+     *
+     * @example
+     *
+     * const initOptions = {
+     *
+     *     // pg-promise initialization options...
+     *
+     *     transact(e) {
+     *         if (e.ctx.finish) {
+     *             // this is a transaction->finish event;
+     *             console.log('Duration:', e.ctx.duration);
+     *             if (e.ctx.success) {
+     *                 // e.ctx.result = resolved data;
+     *             } else {
+     *                 // e.ctx.result = error/rejection reason;
+     *             }
+     *         } else {
+     *             // this is a transaction->start event;
+     *             console.log('Start Time:', e.ctx.start);
+     *         }
+     *     }
+     * };
+     *
+     */
+    transact(options, context) {
+        if (typeof options.transact === 'function') {
+            try {
+                options.transact(context);
+            } catch (e) {
+                // silencing the error, to avoid breaking the transaction;
+                $events.unexpected('transact', e);
+            }
+        }
+    },
+
+    /**
+     * @event error
+     * @description
+     * Global notification of every error encountered by this library.
+     *
+     * The library will suppress any error thrown by the handler and write it into the console.
+     *
+     * @param {*} err
+     * The error encountered, of the same value and type as it was reported.
+     *
+     * @param {EventContext} e
+     * Event Context Object.
+     *
+     * @example
+     * const initOptions = {
+     *
+     *     // pg-promise initialization options...
+     *
+     *     error(err, e) {
+     *
+     *         if (e.cn) {
+     *             // this is a connection-related error
+     *             // cn = safe connection details passed into the library:
+     *             //      if password is present, it is masked by #
+     *         }
+     *
+     *         if (e.query) {
+     *             // query string is available
+     *             if (e.params) {
+     *                 // query parameters are available
+     *             }
+     *         }
+     *
+     *         if (e.ctx) {
+     *             // occurred inside a task or transaction
+     *         }
+     *       }
+     * };
+     *
+     */
+    error(options, err, context) {
+        if (typeof options.error === 'function') {
+            try {
+                options.error(err, context);
+            } catch (e) {
+                // have to silence errors here;
+                // throwing unhandled errors while handling an error
+                // notification is simply not acceptable.
+                $events.unexpected('error', e);
+            }
+        }
+    },
+
+    /**
+     * @event extend
+     * @description
+     * Extends {@link Database} protocol with custom methods and properties.
+     *
+     * Override this event to extend the existing access layer with your own functions and
+     * properties best suited for your application.
+     *
+     * The extension thus becomes available across all access layers:
+     *
+     * - Within the root/default database protocol;
+     * - Inside transactions, including nested ones;
+     * - Inside tasks, including nested ones.
+     *
+     * All pre-defined methods and properties are read-only, so you will get an error,
+     * if you try overriding them.
+     *
+     * The library will suppress any error thrown by the handler and write it into the console.
+     *
+     * @param {object} obj - Protocol object to be extended.
+     *
+     * @param {*} dc - Database Context that was used when creating the {@link Database} object.
+     *
+     * @see $[pg-promise-demo]
+     *
+     * @example
+     *
+     * // In the example below we extend the protocol with function `addImage`
+     * // that will insert one binary image and resolve with the new record id.
+     *
+     * const initOptions = {
+     *
+     *     // pg-promise initialization options...
+     *
+     *     extend(obj, dc) {
+     *         // dc = database context;
+     *         obj.addImage = data => {
+     *             // adds a new image and resolves with its record id:
+     *             return obj.one('INSERT INTO images(data) VALUES($1) RETURNING id', data, a => a.id);
+     *         }
+     *     }
+     * };
+     *
+     * @example
+     *
+     * // It is best to extend the protocol by adding whole entity repositories to it as shown in the following example.
+     * // For a comprehensive example see https://github.com/vitaly-t/pg-promise-demo
+     *
+     * class UsersRepository {
+     *     constructor(rep, pgp) {
+     *         this.rep = rep;
+     *         this.pgp = pgp;
+     *     }
+     *
+     *     add(name) {
+     *         return this.rep.one('INSERT INTO users(name) VALUES($1) RETURNING id', name, a => a.id);
+     *     }
+     *
+     *     remove(id) {
+     *         return this.rep.none('DELETE FROM users WHERE id = $1', id);
+     *     }
+     * }
+     *
+     * // Overriding 'extend' event;
+     * const initOptions = {
+     *
+     *     // pg-promise initialization options...
+     *
+     *     extend(obj, dc) {
+     *         // dc = database context;
+     *         obj.users = new UsersRepository(obj, pgp);
+     *         // You can set different repositories based on `dc`
+     *     }
+     * };
+     *
+     * // Usage example:
+     * db.users.add('John', true)
+     *     .then(id => {
+     *         // user added successfully, id = new user's id
+     *     })
+     *     .catch(error => {
+     *         // failed to add the user;
+     *     });
+     *
+     */
+    extend(options, obj, dc) {
+        if (typeof options.extend === 'function') {
+            try {
+                options.extend.call(obj, obj, dc);
+            } catch (e) {
+                // have to silence errors here;
+                // the result of throwing unhandled errors while
+                // extending the protocol would be unpredictable.
+                $events.unexpected('extend', e);
+            }
+        }
+    },
+
+    /**
+     * @event unexpected
+     * @param {string} event - unhandled event name.
+     * @param {string|Error} e - unhandled error.
+     * @private
+     */
+    unexpected(event, e) {
+        // If you should ever get here, your app is definitely broken, and you need to fix
+        // your event handler to prevent unhandled errors during event notifications.
+        //
+        // Console output is suppressed when running tests, to avoid polluting test output
+        // with error messages that are intentional and of no value to the test.
+
+        /* istanbul ignore if */
+        if (!npm.main.suppressErrors) {
+            const stack = e instanceof Error ? e.stack : new Error().stack;
+            npm.con.error('Unexpected error in \'%s\' event handler.\n%s\n', event, stack);
+        }
+    }
+};
+
+module.exports = $events;
+
+/**
+ * @typedef EventContext
+ * @description
+ * This common type is used for the following events: {@link event:query query}, {@link event:receive receive},
+ * {@link event:error error}, {@link event:task task} and {@link event:transact transact}.
+ *
+ * @property {string|object} cn
+ *
+ * Set only for event {@link event:error error}, and only when the error is connection-related.
+ *
+ * It is a safe copy of the connection string/object that was used when initializing `db` - the database instance.
+ *
+ * If the original connection contains a password, the safe copy contains it masked with symbol `#`, so the connection
+ * can be logged safely, without exposing the password.
+ *
+ * @property {*} dc
+ * Database Context that was used when creating the database object (see {@link Database}). It is set for all events.
+ *
+ * @property {string|object} query
+ *
+ * Query string/object that was passed into the query method. This property is only set during events {@link event:query query},
+ * {@link event:receive receive} and {@link event:error error} (only when the error is query-related).
+ *
+ * @property {external:Client} client
+ *
+ * $[pg.Client] object that represents the connection. It is set for all events, except for event {@link event:error error}
+ * when it is connection-related. Note that sometimes the value may be unset when the connection is lost.
+ *
+ * @property {*} params - Formatting parameters for the query.
+ *
+ * It is set only for events {@link event:query query}, {@link event:receive receive} and {@link event:error error}, and only
+ * when it is needed for logging. This library takes an extra step in figuring out when formatting parameters are of any value
+ * to the event logging:
+ * - when an error occurs related to the query formatting, event {@link event:error error} is sent with the property set.
+ * - when initialization parameter `pgFormat` is used, and all query formatting is done within the $[PG] library, events
+ * {@link event:query query} and {@link event:receive receive} will have this property set also, since this library no longer
+ * handles the query formatting.
+ *
+ * When this parameter is not set, it means one of the two things:
+ * - there were no parameters passed into the query method;
+ * - property `query` of this object already contains all the formatting values in it, so logging only the query is sufficient.
+ *
+ * @property {TaskContext} ctx
+ * _Task/Transaction Context_ object.
+ *
+ * This property is always set for events {@link event:task task} and {@link event:transact transact}, while for events
+ * {@link event:query query}, {@link event:receive receive} and {@link event:error error} it is only set when they occur
+ * inside a task or transaction.
+ *
+ */
+
+
+/***/ }),
+/* 13 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+/**
+ * Copyright (c) 2010-2017 Brian Carlson (brian.m.carlson@gmail.com)
+ * All rights reserved.
+ *
+ * This source code is licensed under the MIT license found in the
+ * README.md file in the root directory of this source tree.
+ */
+
+const crypto = __webpack_require__(55)
+
+const defaults = __webpack_require__(14)
+
+function escapeElement (elementRepresentation) {
+  var escaped = elementRepresentation
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+
+  return '"' + escaped + '"'
+}
+
+// convert a JS array to a postgres array literal
+// uses comma separator so won't work for types like box that use
+// a different array separator.
+function arrayString (val) {
+  var result = '{'
+  for (var i = 0; i < val.length; i++) {
+    if (i > 0) {
+      result = result + ','
+    }
+    if (val[i] === null || typeof val[i] === 'undefined') {
+      result = result + 'NULL'
+    } else if (Array.isArray(val[i])) {
+      result = result + arrayString(val[i])
+    } else if (val[i] instanceof Buffer) {
+      result += '\\\\x' + val[i].toString('hex')
+    } else {
+      result += escapeElement(prepareValue(val[i]))
+    }
+  }
+  result = result + '}'
+  return result
+}
+
+// converts values from javascript types
+// to their 'raw' counterparts for use as a postgres parameter
+// note: you can override this function to provide your own conversion mechanism
+// for complex types, etc...
+var prepareValue = function (val, seen) {
+  if (val instanceof Buffer) {
+    return val
+  }
+  if (ArrayBuffer.isView(val)) {
+    var buf = Buffer.from(val.buffer, val.byteOffset, val.byteLength)
+    if (buf.length === val.byteLength) {
+      return buf
+    }
+    return buf.slice(val.byteOffset, val.byteOffset + val.byteLength) // Node.js v4 does not support those Buffer.from params
+  }
+  if (val instanceof Date) {
+    if (defaults.parseInputDatesAsUTC) {
+      return dateToStringUTC(val)
+    } else {
+      return dateToString(val)
+    }
+  }
+  if (Array.isArray(val)) {
+    return arrayString(val)
+  }
+  if (val === null || typeof val === 'undefined') {
+    return null
+  }
+  if (typeof val === 'object') {
+    return prepareObject(val, seen)
+  }
+  return val.toString()
+}
+
+function prepareObject (val, seen) {
+  if (val && typeof val.toPostgres === 'function') {
+    seen = seen || []
+    if (seen.indexOf(val) !== -1) {
+      throw new Error('circular reference detected while preparing "' + val + '" for query')
+    }
+    seen.push(val)
+
+    return prepareValue(val.toPostgres(prepareValue), seen)
+  }
+  return JSON.stringify(val)
+}
+
+function pad (number, digits) {
+  number = '' + number
+  while (number.length < digits) { number = '0' + number }
+  return number
+}
+
+function dateToString (date) {
+  var offset = -date.getTimezoneOffset()
+  var ret = pad(date.getFullYear(), 4) + '-' +
+    pad(date.getMonth() + 1, 2) + '-' +
+    pad(date.getDate(), 2) + 'T' +
+    pad(date.getHours(), 2) + ':' +
+    pad(date.getMinutes(), 2) + ':' +
+    pad(date.getSeconds(), 2) + '.' +
+    pad(date.getMilliseconds(), 3)
+
+  if (offset < 0) {
+    ret += '-'
+    offset *= -1
+  } else { ret += '+' }
+
+  return ret + pad(Math.floor(offset / 60), 2) + ':' + pad(offset % 60, 2)
+}
+
+function dateToStringUTC (date) {
+  var ret = pad(date.getUTCFullYear(), 4) + '-' +
+    pad(date.getUTCMonth() + 1, 2) + '-' +
+    pad(date.getUTCDate(), 2) + 'T' +
+    pad(date.getUTCHours(), 2) + ':' +
+    pad(date.getUTCMinutes(), 2) + ':' +
+    pad(date.getUTCSeconds(), 2) + '.' +
+    pad(date.getUTCMilliseconds(), 3)
+
+  return ret + '+00:00'
+}
+
+function normalizeQueryConfig (config, values, callback) {
+  // can take in strings or config objects
+  config = (typeof (config) === 'string') ? { text: config } : config
+  if (values) {
+    if (typeof values === 'function') {
+      config.callback = values
+    } else {
+      config.values = values
+    }
+  }
+  if (callback) {
+    config.callback = callback
+  }
+  return config
+}
+
+const md5 = function (string) {
+  return crypto.createHash('md5').update(string, 'utf-8').digest('hex')
+}
+
+// See AuthenticationMD5Password at https://www.postgresql.org/docs/current/static/protocol-flow.html
+const postgresMd5PasswordHash = function (user, password, salt) {
+  var inner = md5(password + user)
+  var outer = md5(Buffer.concat([Buffer.from(inner), salt]))
+  return 'md5' + outer
+}
+
+module.exports = {
+  prepareValue: function prepareValueWrapper (value) {
+    // this ensures that extra arguments do not get passed into prepareValue
+    // by accident, eg: from calling values.map(utils.prepareValue)
+    return prepareValue(value)
+  },
+  normalizeQueryConfig,
+  postgresMd5PasswordHash,
+  md5
+}
+
+
+/***/ }),
+/* 14 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+/**
+ * Copyright (c) 2010-2017 Brian Carlson (brian.m.carlson@gmail.com)
+ * All rights reserved.
+ *
+ * This source code is licensed under the MIT license found in the
+ * README.md file in the root directory of this source tree.
+ */
+
+module.exports = {
+  // database host. defaults to localhost
+  host: 'localhost',
+
+  // database user's name
+  user: process.platform === 'win32' ? process.env.USERNAME : process.env.USER,
+
+  // name of database to connect
+  database: process.platform === 'win32' ? process.env.USERNAME : process.env.USER,
+
+  // database user's password
+  password: null,
+
+  // a Postgres connection string to be used instead of setting individual connection items
+  // NOTE:  Setting this value will cause it to override any other value (such as database or user) defined
+  // in the defaults object.
+  connectionString: undefined,
+
+  // database port
+  port: 5432,
+
+  // number of rows to return at a time from a prepared statement's
+  // portal. 0 will return all rows at once
+  rows: 0,
+
+  // binary result mode
+  binary: false,
+
+  // Connection pool options - see https://github.com/brianc/node-pg-pool
+
+  // number of connections to use in connection pool
+  // 0 will disable connection pooling
+  max: 10,
+
+  // max milliseconds a client can go unused before it is removed
+  // from the pool and destroyed
+  idleTimeoutMillis: 30000,
+
+  client_encoding: '',
+
+  ssl: false,
+
+  application_name: undefined,
+  fallback_application_name: undefined,
+
+  parseInputDatesAsUTC: false,
+
+  // max milliseconds any query using this connection will execute for before timing out in error. false=unlimited
+  statement_timeout: false
+}
+
+var pgTypes = __webpack_require__(8)
+// save default parsers
+var parseBigInteger = pgTypes.getTypeParser(20, 'text')
+var parseBigIntegerArray = pgTypes.getTypeParser(1016, 'text')
+
+// parse int8 so you can get your count values as actual numbers
+module.exports.__defineSetter__('parseInt8', function (val) {
+  pgTypes.setTypeParser(20, 'text', val ? pgTypes.getTypeParser(23, 'text') : parseBigInteger)
+  pgTypes.setTypeParser(1016, 'text', val ? pgTypes.getTypeParser(1007, 'text') : parseBigIntegerArray)
+})
+
+
+/***/ }),
 /* 15 */
 /***/ (function(module, exports) {
 
@@ -116,37 +3286,4043 @@ module.exports = require("fs");
 module.exports = require("assert");
 
 /***/ }),
-/* 17 */,
-/* 18 */,
-/* 19 */,
-/* 20 */,
-/* 21 */,
-/* 22 */,
-/* 23 */,
-/* 24 */,
-/* 25 */,
-/* 26 */,
-/* 27 */,
-/* 28 */,
-/* 29 */,
-/* 30 */,
-/* 31 */,
-/* 32 */,
-/* 33 */,
-/* 34 */,
-/* 35 */,
-/* 36 */,
-/* 37 */,
-/* 38 */,
-/* 39 */,
-/* 40 */,
-/* 41 */,
-/* 42 */,
-/* 43 */,
-/* 44 */,
-/* 45 */,
-/* 46 */,
-/* 47 */,
+/* 17 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    os: __webpack_require__(2),
+    utils: __webpack_require__(0),
+    minify: __webpack_require__(21)
+};
+
+/**
+ * @class errors.QueryFileError
+ * @augments external:Error
+ * @description
+ * {@link errors.QueryFileError QueryFileError} class, available from the {@link errors} namespace.
+ *
+ * This type represents all errors related to {@link QueryFile}.
+ *
+ * @property {string} name
+ * Standard {@link external:Error Error} property - error type name = `QueryFileError`.
+ *
+ * @property {string} message
+ * Standard {@link external:Error Error} property - the error message.
+ *
+ * @property {string} stack
+ * Standard {@link external:Error Error} property - the stack trace.
+ *
+ * @property {string} file
+ * File path/name that was passed into the {@link QueryFile} constructor.
+ *
+ * @property {object} options
+ * Set of options that was used by the {@link QueryFile} object.
+ *
+ * @property {SQLParsingError} error
+ * Internal $[SQLParsingError] object.
+ *
+ * It is set only when the error was thrown by $[pg-minify] while parsing the SQL file.
+ *
+ * @see QueryFile
+ *
+ */
+function QueryFileError(error, qf) {
+    const temp = Error.apply(this, arguments);
+    temp.name = this.name = 'QueryFileError';
+    this.stack = temp.stack;
+    if (error instanceof npm.minify.SQLParsingError) {
+        this.error = error;
+        this.message = 'Failed to parse the SQL.';
+    } else {
+        this.message = error.message;
+    }
+    this.file = qf.file;
+    this.options = qf.options;
+}
+
+QueryFileError.prototype = Object.create(Error.prototype, {
+    constructor: {
+        value: QueryFileError,
+        writable: true,
+        configurable: true
+    }
+});
+
+/**
+ * @method errors.QueryFileError#toString
+ * @description
+ * Creates a well-formatted multi-line string that represents the error.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * @param {number} [level=0]
+ * Nested output level, to provide visual offset.
+ *
+ * @returns {string}
+ */
+QueryFileError.prototype.toString = function (level) {
+    level = level > 0 ? parseInt(level) : 0;
+    const gap0 = npm.utils.messageGap(level),
+        gap1 = npm.utils.messageGap(level + 1),
+        lines = [
+            'QueryFileError {',
+            gap1 + 'message: "' + this.message + '"',
+            gap1 + 'options: ' + JSON.stringify(this.options),
+            gap1 + 'file: "' + this.file + '"'
+        ];
+    if (this.error) {
+        lines.push(gap1 + 'error: ' + this.error.toString(level + 1));
+    }
+    lines.push(gap0 + '}');
+    return lines.join(npm.os.EOL);
+};
+
+npm.utils.addInspection(QueryFileError, function () {
+    return this.toString();
+});
+
+module.exports = QueryFileError;
+
+
+/***/ }),
+/* 18 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    utils: __webpack_require__(0),
+    formatting: __webpack_require__(3)
+};
+
+/**
+ * @class helpers.TableName
+ * @description
+ *
+ * **Alternative Syntax:** `TableName({table, [schema]})` &#8658; {@link helpers.TableName}
+ *
+ * Prepares and escapes a full table name that can be injected into queries directly.
+ *
+ * This is a read-only type that can be used wherever parameter `table` is supported.
+ *
+ * It supports $[Custom Type Formatting], which means you can use the type directly as a formatting
+ * parameter, without specifying any escaping.
+ *
+ * @param {string|object} table
+ * Table name details, depending on the type:
+ *
+ * - table name, if `table` is a string
+ * - object `{table, [schema]}`
+ *
+ * @param {string} [schema]
+ * Database schema name.
+ *
+ * When `table` is passed in as `{table, [schema]}`, this parameter is ignored.
+ *
+ * @property {string} name
+ * Formatted/escaped full table name, based on properties `schema` + `table`.
+ *
+ * @property {string} table
+ * Table name.
+ *
+ * @property {string} schema
+ * Database schema name.
+ *
+ * It is `undefined` when no schema was specified (or if it was an empty string).
+ *
+ * @returns {helpers.TableName}
+ *
+ * @example
+ *
+ * const table = new pgp.helpers.TableName('my-table', 'my-schema');
+ * console.log(table);
+ * //=> "my-schema"."my-table"
+ *
+ * // Formatting the type directly:
+ * pgp.as.format('SELECT * FROM $1', table);
+ * //=> SELECT * FROM "my-schema"."my-table"
+ *
+ */
+function TableName(table, schema) {
+
+    if (!(this instanceof TableName)) {
+        return new TableName(table, schema);
+    }
+
+    if (table && typeof table === 'object' && 'table' in table) {
+        schema = table.schema;
+        table = table.table;
+    }
+
+    if (!npm.utils.isText(table)) {
+        throw new TypeError('Table name must be a non-empty text string.');
+    }
+
+    if (!npm.utils.isNull(schema)) {
+        if (typeof schema !== 'string') {
+            throw new TypeError('Invalid schema name.');
+        }
+        if (schema.length > 0) {
+            this.schema = schema;
+        }
+    }
+
+    this.table = table;
+    this.name = npm.formatting.as.name(table);
+
+    if (this.schema) {
+        this.name = npm.formatting.as.name(schema) + '.' + this.name;
+    }
+
+    this[npm.formatting.as.ctf.rawType] = true; // do not format the content when used as a formatting value
+
+    Object.freeze(this);
+}
+
+/**
+ * @method helpers.TableName#toPostgres
+ * @description
+ * $[Custom Type Formatting].
+ *
+ * @param {helpers.TableName} [self]
+ * Optional self-reference.
+ *
+ * @returns {string}
+ */
+TableName.prototype[npm.formatting.as.ctf.toPostgres] = function (self) {
+    self = this || self;
+    return self.name;
+};
+
+/**
+ * @method helpers.TableName#toString
+ * @description
+ * Creates a well-formatted string that represents the object.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * @returns {string}
+ */
+TableName.prototype.toString = function () {
+    return this.name;
+};
+
+npm.utils.addInspection(TableName, function () {
+    return this.toString();
+});
+
+module.exports = TableName;
+
+
+/***/ }),
+/* 19 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    qResult: __webpack_require__(96),
+    qFile: __webpack_require__(17),
+    prepared: __webpack_require__(97),
+    paramQuery: __webpack_require__(98)
+};
+
+/**
+ * @namespace errors
+ * @description
+ * Error types namespace, available as `pgp.errors`, before and after initializing the library.
+ *
+ * @property {function} PreparedStatementError
+ * {@link errors.PreparedStatementError PreparedStatementError} class constructor.
+ *
+ * Represents all errors that can be reported by class {@link PreparedStatement}.
+ *
+ * @property {function} ParameterizedQueryError
+ * {@link errors.ParameterizedQueryError ParameterizedQueryError} class constructor.
+ *
+ * Represents all errors that can be reported by class {@link ParameterizedQuery}.
+ *
+ * @property {function} QueryFileError
+ * {@link errors.QueryFileError QueryFileError} class constructor.
+ *
+ * Represents all errors that can be reported by class {@link QueryFile}.
+ *
+ * @property {function} QueryResultError
+ * {@link errors.QueryResultError QueryResultError} class constructor.
+ *
+ * Represents all result-specific errors from query methods.
+ *
+ * @property {errors.queryResultErrorCode} queryResultErrorCode
+ * Error codes `enum` used by class {@link errors.QueryResultError QueryResultError}.
+ *
+ */
+
+module.exports = {
+    QueryResultError: npm.qResult.QueryResultError,
+    queryResultErrorCode: npm.qResult.queryResultErrorCode,
+    PreparedStatementError: npm.prepared,
+    ParameterizedQueryError: npm.paramQuery,
+    QueryFileError: npm.qFile
+};
+
+Object.freeze(module.exports);
+
+
+/***/ }),
+/* 20 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var npm = {
+    stream: __webpack_require__(9),
+    util: __webpack_require__(1)
+};
+
+/////////////////////////////////////
+// Checks if the value is a promise;
+function isPromise(value) {
+    return value && typeof value.then === 'function';
+}
+
+////////////////////////////////////////////
+// Checks object for being a readable stream;
+
+function isReadableStream(obj) {
+    return obj instanceof npm.stream.Stream &&
+        typeof obj._read === 'function' &&
+        typeof obj._readableState === 'object';
+}
+
+////////////////////////////////////////////////////////////
+// Sets an object property as read-only and non-enumerable.
+function extend(obj, name, value) {
+    Object.defineProperty(obj, name, {
+        value: value,
+        configurable: false,
+        enumerable: false,
+        writable: false
+    });
+}
+
+///////////////////////////////////////////
+// Returns a space gap for console output;
+function messageGap(level) {
+    return Array(1 + level * 4).join(' ');
+}
+
+function formatError(error, level) {
+    var names = ['BatchError', 'PageError', 'SequenceError'];
+    var msg = npm.util.inspect(error);
+    if (error instanceof Error) {
+        if (names.indexOf(error.name) === -1) {
+            var gap = messageGap(level);
+            msg = msg.split('\n').map(function (line, index) {
+                return (index ? gap : '') + line;
+            }).join('\n');
+        } else {
+            msg = error.toString(level);
+        }
+    }
+    return msg;
+}
+
+////////////////////////////////////////////////////////
+// Adds prototype inspection, with support of the newer
+// Custom Inspection, which was added in Node.js 6.x
+function addInspection(type, cb) {
+    // istanbul ignore next;
+    if (npm.util.inspect.custom) {
+        // Custom inspection is supported:
+        type.prototype[npm.util.inspect.custom] = cb;
+    } else {
+        // Use classic inspection:
+        type.prototype.inspect = cb;
+    }
+}
+
+module.exports = {
+    addInspection: addInspection,
+    formatError: formatError,
+    isPromise: isPromise,
+    isReadableStream: isReadableStream,
+    messageGap: messageGap,
+    extend: extend
+};
+
+
+/***/ }),
+/* 21 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var parser = __webpack_require__(88);
+var error = __webpack_require__(33);
+
+parser.SQLParsingError = error.SQLParsingError;
+parser.parsingErrorCode = error.parsingErrorCode;
+
+module.exports = parser;
+
+
+/***/ }),
+/* 22 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+/**
+ * @enum {number}
+ * @alias queryResult
+ * @readonly
+ * @description
+ * **Query Result Mask**
+ *
+ * Binary mask that represents the result expected from queries.
+ * It is used by the base {@link Database#query query} method, as well as method {@link Database#func func}.
+ *
+ * The mask is always the last optional parameter, which defaults to `queryResult.any`.
+ *
+ * Any combination of flags is supported, except for `one + many`.
+ *
+ * The type is available from the library's root: `pgp.queryResult`.
+ *
+ * @see {@link Database#query Database.query}, {@link Database#func Database.func}
+ */
+const queryResult = {
+    /** Single row is expected, to be resolved as a single row-object. */
+    one: 1,
+    /** One or more rows expected, to be resolved as an array with at least 1 row-object. */
+    many: 2,
+    /** Expecting no rows, to be resolved with `null`. */
+    none: 4,
+    /** `many|none` - any result is expected, to be resolved with an array of rows-objects. */
+    any: 6
+};
+
+Object.freeze(queryResult);
+
+module.exports = queryResult;
+
+
+/***/ }),
+/* 23 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+/*
+  The most important regular expressions and data as used by the library,
+  isolated here to help with possible edge cases during integration.
+*/
+
+module.exports = {
+    // Searches for all Named Parameters, supporting any of the following syntax:
+    // ${propName}, $(propName), $[propName], $/propName/, $<propName>
+    // Nested property names are also supported: ${propName.abc}
+    namedParameters: /\$(?:({)|(\()|(<)|(\[)|(\/))\s*[a-zA-Z0-9$_.]+(\^|~|#|:raw|:alias|:name|:json|:csv|:list|:value)?\s*(?:(?=\2)(?=\3)(?=\4)(?=\5)}|(?=\1)(?=\3)(?=\4)(?=\5)\)|(?=\1)(?=\2)(?=\4)(?=\5)>|(?=\1)(?=\2)(?=\3)(?=\5)]|(?=\1)(?=\2)(?=\3)(?=\4)\/)/g,
+
+    // Searches for all variables $1, $2, ...$100000, and while it will find greater than $100000
+    // variables, the formatting engine is expected to throw an error for those.
+    multipleValues: /\$([1-9][0-9]{0,16}(?![0-9])(\^|~|#|:raw|:alias|:name|:json|:csv|:list|:value)?)/g,
+
+    // Searches for all occurrences of variable $1
+    singleValue: /\$1(?![0-9])(\^|~|#|:raw|:alias|:name|:json|:csv|:list|:value)?/g,
+
+    // Matches a valid column name for the Column type parser, according to the following rules:
+    // - can contain: any combination of a-z, A-Z, 0-9, $ or _
+    // - can contain ? at the start
+    // - can contain one of the supported filters/modifiers
+    validColumn: /\??[a-zA-Z0-9$_]+(\^|~|#|:raw|:alias|:name|:json|:csv|:list|:value)?/,
+
+    // Matches a valid open-name JavaScript variable, according to the following rules:
+    // - can contain: any combination of a-z, A-Z, 0-9, $ or _
+    validVariable: /[a-zA-Z0-9$_]+/,
+
+    // Matches a valid modifier in a column/property:
+    hasValidModifier: /\^|~|#|:raw|:alias|:name|:json|:csv|:list|:value/,
+
+    // List of all supported formatting modifiers:
+    validModifiers: ['^', '~', '#', ':raw', ':alias', ':name', ':json', ':csv', ':list', ':value'],
+
+    // Splits device information for a file path, to determine whether the path is absolute or relative;
+    // This is specifically for Windows, and based on: https://github.com/sindresorhus/path-is-absolute
+    splitDevice: /^([a-zA-Z]:|[\\/]{2}[^\\/]+[\\/]+[^\\/]+)?([\\/])?([\s\S]*?)$/
+};
+
+
+/***/ }),
+/* 24 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+/* eslint no-var: off */
+var v = process.versions.node.split('.'),
+    highVer = +v[0], lowVer = +v[1];
+
+// istanbul ignore next
+if (highVer < 4 || (highVer === 4 && lowVer < 5)) {
+
+    // Starting from pg-promise v5.6.0, the library no longer supports legacy
+    // Node.js versions 0.10 and 0.12, requiring Node.js 4.5.0 as the minimum.
+    // The last version that supported legacy Node.js versions was 5.5.8
+
+    throw new Error('Minimum Node.js version supported by pg-promise is 4.5.0');
+}
+
+module.exports = __webpack_require__(51);
+
+
+/***/ }),
+/* 25 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+/**
+ * Copyright (c) 2010-2017 Brian Carlson (brian.m.carlson@gmail.com)
+ * All rights reserved.
+ *
+ * This source code is licensed under the MIT license found in the
+ * README.md file in the root directory of this source tree.
+ */
+
+var util = __webpack_require__(1)
+var Client = __webpack_require__(54)
+var defaults = __webpack_require__(14)
+var Connection = __webpack_require__(30)
+var Pool = __webpack_require__(76)
+
+const poolFactory = (Client) => {
+  var BoundPool = function (options) {
+    var config = Object.assign({ Client: Client }, options)
+    return new Pool(config)
+  }
+
+  util.inherits(BoundPool, Pool)
+
+  return BoundPool
+}
+
+var PG = function (clientConstructor) {
+  this.defaults = defaults
+  this.Client = clientConstructor
+  this.Query = this.Client.Query
+  this.Pool = poolFactory(this.Client)
+  this._pools = []
+  this.Connection = Connection
+  this.types = __webpack_require__(8)
+}
+
+if (typeof process.env.NODE_PG_FORCE_NATIVE !== 'undefined') {
+  module.exports = new PG(__webpack_require__(31))
+} else {
+  module.exports = new PG(Client)
+
+  // lazy require native module...the native module may not have installed
+  module.exports.__defineGetter__('native', function () {
+    delete module.exports.native
+    var native = null
+    try {
+      native = new PG(__webpack_require__(31))
+    } catch (err) {
+      if (err.code !== 'MODULE_NOT_FOUND') {
+        throw err
+      }
+      console.error(err.message)
+    }
+    module.exports.native = native
+    return native
+  })
+}
+
+
+/***/ }),
+/* 26 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+exports.parse = function (source, transform) {
+  return new ArrayParser(source, transform).parse()
+}
+
+function ArrayParser (source, transform) {
+  this.source = source
+  this.transform = transform || identity
+  this.position = 0
+  this.entries = []
+  this.recorded = []
+  this.dimension = 0
+}
+
+ArrayParser.prototype.isEof = function () {
+  return this.position >= this.source.length
+}
+
+ArrayParser.prototype.nextCharacter = function () {
+  var character = this.source[this.position++]
+  if (character === '\\') {
+    return {
+      value: this.source[this.position++],
+      escaped: true
+    }
+  }
+  return {
+    value: character,
+    escaped: false
+  }
+}
+
+ArrayParser.prototype.record = function (character) {
+  this.recorded.push(character)
+}
+
+ArrayParser.prototype.newEntry = function (includeEmpty) {
+  var entry
+  if (this.recorded.length > 0 || includeEmpty) {
+    entry = this.recorded.join('')
+    if (entry === 'NULL' && !includeEmpty) {
+      entry = null
+    }
+    if (entry !== null) entry = this.transform(entry)
+    this.entries.push(entry)
+    this.recorded = []
+  }
+}
+
+ArrayParser.prototype.parse = function (nested) {
+  var character, parser, quote
+  while (!this.isEof()) {
+    character = this.nextCharacter()
+    if (character.value === '{' && !quote) {
+      this.dimension++
+      if (this.dimension > 1) {
+        parser = new ArrayParser(this.source.substr(this.position - 1), this.transform)
+        this.entries.push(parser.parse(true))
+        this.position += parser.position - 2
+      }
+    } else if (character.value === '}' && !quote) {
+      this.dimension--
+      if (!this.dimension) {
+        this.newEntry()
+        if (nested) return this.entries
+      }
+    } else if (character.value === '"' && !character.escaped) {
+      if (quote) this.newEntry(true)
+      quote = !quote
+    } else if (character.value === ',' && !quote) {
+      this.newEntry()
+    } else {
+      this.record(character.value)
+    }
+  }
+  if (this.dimension !== 0) {
+    throw new Error('array dimension not balanced')
+  }
+  return this.entries
+}
+
+function identity (value) {
+  return value
+}
+
+
+/***/ }),
+/* 27 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var array = __webpack_require__(26);
+
+module.exports = {
+  create: function (source, transform) {
+    return {
+      parse: function() {
+        return array.parse(source, transform);
+      }
+    };
+  }
+};
+
+
+/***/ }),
+/* 28 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+/**
+ * Copyright (c) 2010-2017 Brian Carlson (brian.m.carlson@gmail.com)
+ * All rights reserved.
+ *
+ * This source code is licensed under the MIT license found in the
+ * README.md file in the root directory of this source tree.
+ */
+
+var types = __webpack_require__(8)
+
+function TypeOverrides (userTypes) {
+  this._types = userTypes || types
+  this.text = {}
+  this.binary = {}
+}
+
+TypeOverrides.prototype.getOverrides = function (format) {
+  switch (format) {
+    case 'text': return this.text
+    case 'binary': return this.binary
+    default: return {}
+  }
+}
+
+TypeOverrides.prototype.setTypeParser = function (oid, format, parseFn) {
+  if (typeof format === 'function') {
+    parseFn = format
+    format = 'text'
+  }
+  this.getOverrides(format)[oid] = parseFn
+}
+
+TypeOverrides.prototype.getTypeParser = function (oid, format) {
+  format = format || 'text'
+  return this.getOverrides(format)[oid] || this._types.getTypeParser(oid, format)
+}
+
+module.exports = TypeOverrides
+
+
+/***/ }),
+/* 29 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+/**
+ * Copyright (c) 2010-2017 Brian Carlson (brian.m.carlson@gmail.com)
+ * All rights reserved.
+ *
+ * This source code is licensed under the MIT license found in the
+ * README.md file in the root directory of this source tree.
+ */
+
+var dns = __webpack_require__(67)
+
+var defaults = __webpack_require__(14)
+
+var parse = __webpack_require__(68).parse // parses a connection string
+
+var val = function (key, config, envVar) {
+  if (envVar === undefined) {
+    envVar = process.env[ 'PG' + key.toUpperCase() ]
+  } else if (envVar === false) {
+    // do nothing ... use false
+  } else {
+    envVar = process.env[ envVar ]
+  }
+
+  return config[key] ||
+    envVar ||
+    defaults[key]
+}
+
+var useSsl = function () {
+  switch (process.env.PGSSLMODE) {
+    case 'disable':
+      return false
+    case 'prefer':
+    case 'require':
+    case 'verify-ca':
+    case 'verify-full':
+      return true
+  }
+  return defaults.ssl
+}
+
+var ConnectionParameters = function (config) {
+  // if a string is passed, it is a raw connection string so we parse it into a config
+  config = typeof config === 'string' ? parse(config) : config || {}
+
+  // if the config has a connectionString defined, parse IT into the config we use
+  // this will override other default values with what is stored in connectionString
+  if (config.connectionString) {
+    config = Object.assign({}, config, parse(config.connectionString))
+  }
+
+  this.user = val('user', config)
+  this.database = val('database', config)
+  this.port = parseInt(val('port', config), 10)
+  this.host = val('host', config)
+  this.password = val('password', config)
+  this.binary = val('binary', config)
+  this.ssl = typeof config.ssl === 'undefined' ? useSsl() : config.ssl
+  this.client_encoding = val('client_encoding', config)
+  this.replication = val('replication', config)
+  // a domain socket begins with '/'
+  this.isDomainSocket = (!(this.host || '').indexOf('/'))
+
+  this.application_name = val('application_name', config, 'PGAPPNAME')
+  this.fallback_application_name = val('fallback_application_name', config, false)
+  this.statement_timeout = val('statement_timeout', config, false)
+}
+
+// Convert arg to a string, surround in single quotes, and escape single quotes and backslashes
+var quoteParamValue = function (value) {
+  return "'" + ('' + value).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'"
+}
+
+var add = function (params, config, paramName) {
+  var value = config[paramName]
+  if (value) {
+    params.push(paramName + '=' + quoteParamValue(value))
+  }
+}
+
+ConnectionParameters.prototype.getLibpqConnectionString = function (cb) {
+  var params = []
+  add(params, this, 'user')
+  add(params, this, 'password')
+  add(params, this, 'port')
+  add(params, this, 'application_name')
+  add(params, this, 'fallback_application_name')
+
+  var ssl = typeof this.ssl === 'object' ? this.ssl : {sslmode: this.ssl}
+  add(params, ssl, 'sslmode')
+  add(params, ssl, 'sslca')
+  add(params, ssl, 'sslkey')
+  add(params, ssl, 'sslcert')
+  add(params, ssl, 'sslrootcert')
+
+  if (this.database) {
+    params.push('dbname=' + quoteParamValue(this.database))
+  }
+  if (this.replication) {
+    params.push('replication=' + quoteParamValue(this.replication))
+  }
+  if (this.host) {
+    params.push('host=' + quoteParamValue(this.host))
+  }
+  if (this.isDomainSocket) {
+    return cb(null, params.join(' '))
+  }
+  if (this.client_encoding) {
+    params.push('client_encoding=' + quoteParamValue(this.client_encoding))
+  }
+  dns.lookup(this.host, function (err, address) {
+    if (err) return cb(err, null)
+    params.push('hostaddr=' + quoteParamValue(address))
+    return cb(null, params.join(' '))
+  })
+}
+
+module.exports = ConnectionParameters
+
+
+/***/ }),
+/* 30 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+/**
+ * Copyright (c) 2010-2017 Brian Carlson (brian.m.carlson@gmail.com)
+ * All rights reserved.
+ *
+ * This source code is licensed under the MIT license found in the
+ * README.md file in the root directory of this source tree.
+ */
+
+var net = __webpack_require__(72)
+var EventEmitter = __webpack_require__(5).EventEmitter
+var util = __webpack_require__(1)
+
+var Writer = __webpack_require__(73)
+var Reader = __webpack_require__(74)
+
+var TEXT_MODE = 0
+var BINARY_MODE = 1
+var Connection = function (config) {
+  EventEmitter.call(this)
+  config = config || {}
+  this.stream = config.stream || new net.Socket()
+  this._keepAlive = config.keepAlive
+  this.lastBuffer = false
+  this.lastOffset = 0
+  this.buffer = null
+  this.offset = null
+  this.encoding = config.encoding || 'utf8'
+  this.parsedStatements = {}
+  this.writer = new Writer()
+  this.ssl = config.ssl || false
+  this._ending = false
+  this._mode = TEXT_MODE
+  this._emitMessage = false
+  this._reader = new Reader({
+    headerSize: 1,
+    lengthPadding: -4
+  })
+  var self = this
+  this.on('newListener', function (eventName) {
+    if (eventName === 'message') {
+      self._emitMessage = true
+    }
+  })
+}
+
+util.inherits(Connection, EventEmitter)
+
+Connection.prototype.connect = function (port, host) {
+  if (this.stream.readyState === 'closed') {
+    this.stream.connect(port, host)
+  } else if (this.stream.readyState === 'open') {
+    this.emit('connect')
+  }
+
+  var self = this
+
+  this.stream.on('connect', function () {
+    if (self._keepAlive) {
+      self.stream.setKeepAlive(true)
+    }
+    self.emit('connect')
+  })
+
+  const reportStreamError = function (error) {
+    // don't raise ECONNRESET errors - they can & should be ignored
+    // during disconnect
+    if (self._ending && error.code === 'ECONNRESET') {
+      return
+    }
+    self.emit('error', error)
+  }
+  this.stream.on('error', reportStreamError)
+
+  this.stream.on('close', function () {
+    self.emit('end')
+  })
+
+  if (!this.ssl) {
+    return this.attachListeners(this.stream)
+  }
+
+  this.stream.once('data', function (buffer) {
+    var responseCode = buffer.toString('utf8')
+    switch (responseCode) {
+      case 'N': // Server does not support SSL connections
+        return self.emit('error', new Error('The server does not support SSL connections'))
+      case 'S': // Server supports SSL connections, continue with a secure connection
+        break
+      default: // Any other response byte, including 'E' (ErrorResponse) indicating a server error
+        return self.emit('error', new Error('There was an error establishing an SSL connection'))
+    }
+    var tls = __webpack_require__(75)
+    self.stream = tls.connect({
+      socket: self.stream,
+      servername: host,
+      checkServerIdentity: self.ssl.checkServerIdentity || tls.checkServerIdentity,
+      rejectUnauthorized: self.ssl.rejectUnauthorized,
+      ca: self.ssl.ca,
+      pfx: self.ssl.pfx,
+      key: self.ssl.key,
+      passphrase: self.ssl.passphrase,
+      cert: self.ssl.cert,
+      NPNProtocols: self.ssl.NPNProtocols
+    })
+    self.attachListeners(self.stream)
+    self.stream.on('error', reportStreamError)
+
+    self.emit('sslconnect')
+  })
+}
+
+Connection.prototype.attachListeners = function (stream) {
+  var self = this
+  stream.on('data', function (buff) {
+    self._reader.addChunk(buff)
+    var packet = self._reader.read()
+    while (packet) {
+      var msg = self.parseMessage(packet)
+      if (self._emitMessage) {
+        self.emit('message', msg)
+      }
+      self.emit(msg.name, msg)
+      packet = self._reader.read()
+    }
+  })
+  stream.on('end', function () {
+    self.emit('end')
+  })
+}
+
+Connection.prototype.requestSsl = function () {
+  var bodyBuffer = this.writer
+    .addInt16(0x04D2)
+    .addInt16(0x162F).flush()
+
+  var length = bodyBuffer.length + 4
+
+  var buffer = new Writer()
+    .addInt32(length)
+    .add(bodyBuffer)
+    .join()
+  this.stream.write(buffer)
+}
+
+Connection.prototype.startup = function (config) {
+  var writer = this.writer
+    .addInt16(3)
+    .addInt16(0)
+
+  Object.keys(config).forEach(function (key) {
+    var val = config[key]
+    writer.addCString(key).addCString(val)
+  })
+
+  writer.addCString('client_encoding').addCString("'utf-8'")
+
+  var bodyBuffer = writer.addCString('').flush()
+  // this message is sent without a code
+
+  var length = bodyBuffer.length + 4
+
+  var buffer = new Writer()
+    .addInt32(length)
+    .add(bodyBuffer)
+    .join()
+  this.stream.write(buffer)
+}
+
+Connection.prototype.cancel = function (processID, secretKey) {
+  var bodyBuffer = this.writer
+    .addInt16(1234)
+    .addInt16(5678)
+    .addInt32(processID)
+    .addInt32(secretKey)
+    .flush()
+
+  var length = bodyBuffer.length + 4
+
+  var buffer = new Writer()
+    .addInt32(length)
+    .add(bodyBuffer)
+    .join()
+  this.stream.write(buffer)
+}
+
+Connection.prototype.password = function (password) {
+  // 0x70 = 'p'
+  this._send(0x70, this.writer.addCString(password))
+}
+
+Connection.prototype._send = function (code, more) {
+  if (!this.stream.writable) {
+    return false
+  }
+  if (more === true) {
+    this.writer.addHeader(code)
+  } else {
+    return this.stream.write(this.writer.flush(code))
+  }
+}
+
+Connection.prototype.query = function (text) {
+  // 0x51 = Q
+  this.stream.write(this.writer.addCString(text).flush(0x51))
+}
+
+// send parse message
+// "more" === true to buffer the message until flush() is called
+Connection.prototype.parse = function (query, more) {
+  // expect something like this:
+  // { name: 'queryName',
+  //   text: 'select * from blah',
+  //   types: ['int8', 'bool'] }
+
+  // normalize missing query names to allow for null
+  query.name = query.name || ''
+  if (query.name.length > 63) {
+    console.error('Warning! Postgres only supports 63 characters for query names.')
+    console.error('You supplied', query.name, '(', query.name.length, ')')
+    console.error('This can cause conflicts and silent errors executing queries')
+  }
+  // normalize null type array
+  query.types = query.types || []
+  var len = query.types.length
+  var buffer = this.writer
+    .addCString(query.name) // name of query
+    .addCString(query.text) // actual query text
+    .addInt16(len)
+  for (var i = 0; i < len; i++) {
+    buffer.addInt32(query.types[i])
+  }
+
+  var code = 0x50
+  this._send(code, more)
+}
+
+// send bind message
+// "more" === true to buffer the message until flush() is called
+Connection.prototype.bind = function (config, more) {
+  // normalize config
+  config = config || {}
+  config.portal = config.portal || ''
+  config.statement = config.statement || ''
+  config.binary = config.binary || false
+  var values = config.values || []
+  var len = values.length
+  var useBinary = false
+  for (var j = 0; j < len; j++) { useBinary |= values[j] instanceof Buffer }
+  var buffer = this.writer
+    .addCString(config.portal)
+    .addCString(config.statement)
+  if (!useBinary) { buffer.addInt16(0) } else {
+    buffer.addInt16(len)
+    for (j = 0; j < len; j++) { buffer.addInt16(values[j] instanceof Buffer) }
+  }
+  buffer.addInt16(len)
+  for (var i = 0; i < len; i++) {
+    var val = values[i]
+    if (val === null || typeof val === 'undefined') {
+      buffer.addInt32(-1)
+    } else if (val instanceof Buffer) {
+      buffer.addInt32(val.length)
+      buffer.add(val)
+    } else {
+      buffer.addInt32(Buffer.byteLength(val))
+      buffer.addString(val)
+    }
+  }
+
+  if (config.binary) {
+    buffer.addInt16(1) // format codes to use binary
+    buffer.addInt16(1)
+  } else {
+    buffer.addInt16(0) // format codes to use text
+  }
+  // 0x42 = 'B'
+  this._send(0x42, more)
+}
+
+// send execute message
+// "more" === true to buffer the message until flush() is called
+Connection.prototype.execute = function (config, more) {
+  config = config || {}
+  config.portal = config.portal || ''
+  config.rows = config.rows || ''
+  this.writer
+    .addCString(config.portal)
+    .addInt32(config.rows)
+
+  // 0x45 = 'E'
+  this._send(0x45, more)
+}
+
+var emptyBuffer = Buffer.alloc(0)
+
+Connection.prototype.flush = function () {
+  // 0x48 = 'H'
+  this.writer.add(emptyBuffer)
+  this._send(0x48)
+}
+
+Connection.prototype.sync = function () {
+  // clear out any pending data in the writer
+  this.writer.flush(0)
+
+  this.writer.add(emptyBuffer)
+  this._ending = true
+  this._send(0x53)
+}
+
+const END_BUFFER = Buffer.from([0x58, 0x00, 0x00, 0x00, 0x04])
+
+Connection.prototype.end = function () {
+  // 0x58 = 'X'
+  this.writer.add(emptyBuffer)
+  this._ending = true
+  return this.stream.write(END_BUFFER, () => {
+    this.stream.end()
+  })
+}
+
+Connection.prototype.close = function (msg, more) {
+  this.writer.addCString(msg.type + (msg.name || ''))
+  this._send(0x43, more)
+}
+
+Connection.prototype.describe = function (msg, more) {
+  this.writer.addCString(msg.type + (msg.name || ''))
+  this._send(0x44, more)
+}
+
+Connection.prototype.sendCopyFromChunk = function (chunk) {
+  this.stream.write(this.writer.add(chunk).flush(0x64))
+}
+
+Connection.prototype.endCopyFrom = function () {
+  this.stream.write(this.writer.add(emptyBuffer).flush(0x63))
+}
+
+Connection.prototype.sendCopyFail = function (msg) {
+  // this.stream.write(this.writer.add(emptyBuffer).flush(0x66));
+  this.writer.addCString(msg)
+  this._send(0x66)
+}
+
+var Message = function (name, length) {
+  this.name = name
+  this.length = length
+}
+
+Connection.prototype.parseMessage = function (buffer) {
+  this.offset = 0
+  var length = buffer.length + 4
+  switch (this._reader.header) {
+    case 0x52: // R
+      return this.parseR(buffer, length)
+
+    case 0x53: // S
+      return this.parseS(buffer, length)
+
+    case 0x4b: // K
+      return this.parseK(buffer, length)
+
+    case 0x43: // C
+      return this.parseC(buffer, length)
+
+    case 0x5a: // Z
+      return this.parseZ(buffer, length)
+
+    case 0x54: // T
+      return this.parseT(buffer, length)
+
+    case 0x44: // D
+      return this.parseD(buffer, length)
+
+    case 0x45: // E
+      return this.parseE(buffer, length)
+
+    case 0x4e: // N
+      return this.parseN(buffer, length)
+
+    case 0x31: // 1
+      return new Message('parseComplete', length)
+
+    case 0x32: // 2
+      return new Message('bindComplete', length)
+
+    case 0x33: // 3
+      return new Message('closeComplete', length)
+
+    case 0x41: // A
+      return this.parseA(buffer, length)
+
+    case 0x6e: // n
+      return new Message('noData', length)
+
+    case 0x49: // I
+      return new Message('emptyQuery', length)
+
+    case 0x73: // s
+      return new Message('portalSuspended', length)
+
+    case 0x47: // G
+      return this.parseG(buffer, length)
+
+    case 0x48: // H
+      return this.parseH(buffer, length)
+
+    case 0x57: // W
+      return new Message('replicationStart', length)
+
+    case 0x63: // c
+      return new Message('copyDone', length)
+
+    case 0x64: // d
+      return this.parsed(buffer, length)
+  }
+}
+
+Connection.prototype.parseR = function (buffer, length) {
+  var code = 0
+  var msg = new Message('authenticationOk', length)
+  if (msg.length === 8) {
+    code = this.parseInt32(buffer)
+    if (code === 3) {
+      msg.name = 'authenticationCleartextPassword'
+    }
+    return msg
+  }
+  if (msg.length === 12) {
+    code = this.parseInt32(buffer)
+    if (code === 5) { // md5 required
+      msg.name = 'authenticationMD5Password'
+      msg.salt = Buffer.alloc(4)
+      buffer.copy(msg.salt, 0, this.offset, this.offset + 4)
+      this.offset += 4
+      return msg
+    }
+  }
+  throw new Error('Unknown authenticationOk message type' + util.inspect(msg))
+}
+
+Connection.prototype.parseS = function (buffer, length) {
+  var msg = new Message('parameterStatus', length)
+  msg.parameterName = this.parseCString(buffer)
+  msg.parameterValue = this.parseCString(buffer)
+  return msg
+}
+
+Connection.prototype.parseK = function (buffer, length) {
+  var msg = new Message('backendKeyData', length)
+  msg.processID = this.parseInt32(buffer)
+  msg.secretKey = this.parseInt32(buffer)
+  return msg
+}
+
+Connection.prototype.parseC = function (buffer, length) {
+  var msg = new Message('commandComplete', length)
+  msg.text = this.parseCString(buffer)
+  return msg
+}
+
+Connection.prototype.parseZ = function (buffer, length) {
+  var msg = new Message('readyForQuery', length)
+  msg.name = 'readyForQuery'
+  msg.status = this.readString(buffer, 1)
+  return msg
+}
+
+var ROW_DESCRIPTION = 'rowDescription'
+Connection.prototype.parseT = function (buffer, length) {
+  var msg = new Message(ROW_DESCRIPTION, length)
+  msg.fieldCount = this.parseInt16(buffer)
+  var fields = []
+  for (var i = 0; i < msg.fieldCount; i++) {
+    fields.push(this.parseField(buffer))
+  }
+  msg.fields = fields
+  return msg
+}
+
+var Field = function () {
+  this.name = null
+  this.tableID = null
+  this.columnID = null
+  this.dataTypeID = null
+  this.dataTypeSize = null
+  this.dataTypeModifier = null
+  this.format = null
+}
+
+var FORMAT_TEXT = 'text'
+var FORMAT_BINARY = 'binary'
+Connection.prototype.parseField = function (buffer) {
+  var field = new Field()
+  field.name = this.parseCString(buffer)
+  field.tableID = this.parseInt32(buffer)
+  field.columnID = this.parseInt16(buffer)
+  field.dataTypeID = this.parseInt32(buffer)
+  field.dataTypeSize = this.parseInt16(buffer)
+  field.dataTypeModifier = this.parseInt32(buffer)
+  if (this.parseInt16(buffer) === TEXT_MODE) {
+    this._mode = TEXT_MODE
+    field.format = FORMAT_TEXT
+  } else {
+    this._mode = BINARY_MODE
+    field.format = FORMAT_BINARY
+  }
+  return field
+}
+
+var DATA_ROW = 'dataRow'
+var DataRowMessage = function (length, fieldCount) {
+  this.name = DATA_ROW
+  this.length = length
+  this.fieldCount = fieldCount
+  this.fields = []
+}
+
+// extremely hot-path code
+Connection.prototype.parseD = function (buffer, length) {
+  var fieldCount = this.parseInt16(buffer)
+  var msg = new DataRowMessage(length, fieldCount)
+  for (var i = 0; i < fieldCount; i++) {
+    msg.fields.push(this._readValue(buffer))
+  }
+  return msg
+}
+
+// extremely hot-path code
+Connection.prototype._readValue = function (buffer) {
+  var length = this.parseInt32(buffer)
+  if (length === -1) return null
+  if (this._mode === TEXT_MODE) {
+    return this.readString(buffer, length)
+  }
+  return this.readBytes(buffer, length)
+}
+
+// parses error
+Connection.prototype.parseE = function (buffer, length) {
+  var fields = {}
+  var msg, item
+  var input = new Message('error', length)
+  var fieldType = this.readString(buffer, 1)
+  while (fieldType !== '\0') {
+    fields[fieldType] = this.parseCString(buffer)
+    fieldType = this.readString(buffer, 1)
+  }
+  if (input.name === 'error') {
+    // the msg is an Error instance
+    msg = new Error(fields.M)
+    for (item in input) {
+      // copy input properties to the error
+      if (input.hasOwnProperty(item)) {
+        msg[item] = input[item]
+      }
+    }
+  } else {
+    // the msg is an object literal
+    msg = input
+    msg.message = fields.M
+  }
+  msg.severity = fields.S
+  msg.code = fields.C
+  msg.detail = fields.D
+  msg.hint = fields.H
+  msg.position = fields.P
+  msg.internalPosition = fields.p
+  msg.internalQuery = fields.q
+  msg.where = fields.W
+  msg.schema = fields.s
+  msg.table = fields.t
+  msg.column = fields.c
+  msg.dataType = fields.d
+  msg.constraint = fields.n
+  msg.file = fields.F
+  msg.line = fields.L
+  msg.routine = fields.R
+  return msg
+}
+
+// same thing, different name
+Connection.prototype.parseN = function (buffer, length) {
+  var msg = this.parseE(buffer, length)
+  msg.name = 'notice'
+  return msg
+}
+
+Connection.prototype.parseA = function (buffer, length) {
+  var msg = new Message('notification', length)
+  msg.processId = this.parseInt32(buffer)
+  msg.channel = this.parseCString(buffer)
+  msg.payload = this.parseCString(buffer)
+  return msg
+}
+
+Connection.prototype.parseG = function (buffer, length) {
+  var msg = new Message('copyInResponse', length)
+  return this.parseGH(buffer, msg)
+}
+
+Connection.prototype.parseH = function (buffer, length) {
+  var msg = new Message('copyOutResponse', length)
+  return this.parseGH(buffer, msg)
+}
+
+Connection.prototype.parseGH = function (buffer, msg) {
+  var isBinary = buffer[this.offset] !== 0
+  this.offset++
+  msg.binary = isBinary
+  var columnCount = this.parseInt16(buffer)
+  msg.columnTypes = []
+  for (var i = 0; i < columnCount; i++) {
+    msg.columnTypes.push(this.parseInt16(buffer))
+  }
+  return msg
+}
+
+Connection.prototype.parsed = function (buffer, length) {
+  var msg = new Message('copyData', length)
+  msg.chunk = this.readBytes(buffer, msg.length - 4)
+  return msg
+}
+
+Connection.prototype.parseInt32 = function (buffer) {
+  var value = buffer.readInt32BE(this.offset)
+  this.offset += 4
+  return value
+}
+
+Connection.prototype.parseInt16 = function (buffer) {
+  var value = buffer.readInt16BE(this.offset)
+  this.offset += 2
+  return value
+}
+
+Connection.prototype.readString = function (buffer, length) {
+  return buffer.toString(this.encoding, this.offset, (this.offset += length))
+}
+
+Connection.prototype.readBytes = function (buffer, length) {
+  return buffer.slice(this.offset, (this.offset += length))
+}
+
+Connection.prototype.parseCString = function (buffer) {
+  var start = this.offset
+  var end = buffer.indexOf(0, start)
+  this.offset = end + 1
+  return buffer.toString(this.encoding, start, end)
+}
+// end parsing methods
+module.exports = Connection
+
+
+/***/ }),
+/* 31 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+module.exports = __webpack_require__(77)
+
+
+/***/ }),
+/* 32 */
+/***/ (function(module, exports) {
+
+function webpackEmptyContext(req) {
+	throw new Error("Cannot find module '" + req + "'.");
+}
+webpackEmptyContext.keys = function() { return []; };
+webpackEmptyContext.resolve = webpackEmptyContext;
+module.exports = webpackEmptyContext;
+webpackEmptyContext.id = 32;
+
+/***/ }),
+/* 33 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var EOL = __webpack_require__(2).EOL;
+var utils = __webpack_require__(34);
+
+var parsingErrorCode = {
+    unclosedMLC: 0, // Unclosed multi-line comment.
+    unclosedText: 1, // Unclosed text block.
+    unclosedQI: 2, // Unclosed quoted identifier.
+    multiLineQI: 3, // Multi-line quoted identifiers are not supported.
+    nestedMLC: 4 // Nested multi-line comments are not supported.
+};
+
+Object.freeze(parsingErrorCode);
+
+var errorMessages = [
+    {name: 'unclosedMLC', message: 'Unclosed multi-line comment.'},
+    {name: 'unclosedText', message: 'Unclosed text block.'},
+    {name: 'unclosedQI', message: 'Unclosed quoted identifier.'},
+    {name: 'multiLineQI', message: 'Multi-line quoted identifiers are not supported.'},
+    {name: 'nestedMLC', message: 'Nested multi-line comments are not supported.'}
+];
+
+function SQLParsingError(code, position) {
+    var temp = Error.apply(this, arguments);
+    temp.name = this.name = 'SQLParsingError';
+    this.stack = temp.stack;
+    this.code = code; // one of parsingErrorCode values;
+    this.error = errorMessages[code].message;
+    this.position = position; // Error position in the text: {line, column}
+    this.message = 'Error parsing SQL at {line:' + position.line + ',col:' + position.column + '}: ' + this.error;
+}
+
+SQLParsingError.prototype = Object.create(Error.prototype, {
+    constructor: {
+        value: SQLParsingError,
+        writable: true,
+        configurable: true
+    }
+});
+
+SQLParsingError.prototype.toString = function (level) {
+    level = level > 0 ? parseInt(level) : 0;
+    var gap = utils.messageGap(level + 1);
+    var lines = [
+        'SQLParsingError {',
+        gap + 'code: parsingErrorCode.' + errorMessages[this.code].name,
+        gap + 'error: "' + this.error + '"',
+        gap + 'position: {line: ' + this.position.line + ', col: ' + this.position.column + '}',
+        utils.messageGap(level) + '}'
+    ];
+    return lines.join(EOL);
+};
+
+SQLParsingError.prototype.inspect = function () {
+    return this.toString();
+};
+
+module.exports = {
+    SQLParsingError: SQLParsingError,
+    parsingErrorCode: parsingErrorCode
+};
+
+
+/***/ }),
+/* 34 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var os = __webpack_require__(2);
+
+//////////////////////////////////////
+// Returns the End-Of-Line from text.
+function getEOL(text) {
+    var idx = 0, unix = 0, windows = 0;
+    while (idx < text.length) {
+        idx = text.indexOf('\n', idx);
+        if (idx === -1) {
+            break;
+        }
+        if (idx > 0 && text[idx - 1] === '\r') {
+            windows++;
+        } else {
+            unix++;
+        }
+        idx++;
+    }
+    if (unix === windows) {
+        return os.EOL;
+    }
+    return unix > windows ? '\n' : '\r\n';
+}
+
+///////////////////////////////////////////////////////
+// Returns {line, column} of an index within the text.
+function getIndexPos(text, index, eol) {
+    var lineIdx = 0, colIdx = index, pos = 0;
+    do {
+        pos = text.indexOf(eol, pos);
+        if (pos === -1 || index < pos + eol.length) {
+            break;
+        }
+        lineIdx++;
+        pos += eol.length;
+        colIdx = index - pos;
+    } while (pos < index);
+    return {
+        line: lineIdx + 1,
+        column: colIdx + 1
+    };
+}
+
+///////////////////////////////////////////
+// Returns a space gap for console output.
+function messageGap(level) {
+    return Array(1 + level * 4).join(' ');
+}
+
+module.exports = {
+    getEOL: getEOL,
+    getIndexPos: getIndexPos,
+    messageGap: messageGap
+};
+
+
+/***/ }),
+/* 35 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+/**
+ * @class PromiseAdapter
+ * @summary Adapter for the primary promise operations.
+ * @description
+ * Provides compatibility with promise libraries that cannot be recognized automatically,
+ * via functions that implement the primary operations with promises:
+ *
+ *  - construct a new promise with a callback function
+ *  - resolve a promise with some result data
+ *  - reject a promise with a reason
+ *  - resolve an array of promises
+ *
+ * The type is available from the library's root: `pgp.PromiseAdapter`.
+ *
+ * @param {object} api
+ * Promise API configuration object.
+ *
+ * Passing in anything other than an object will throw {@link external:TypeError TypeError} = `Adapter requires an api configuration object.`
+ *
+ * @param {function} api.create
+ * A function that takes a callback parameter and returns a new promise object.
+ * The callback parameter is expected to be `function(resolve, reject)`.
+ *
+ * Passing in anything other than a function will throw {@link external:TypeError TypeError} = `Function 'create' must be specified.`
+ *
+ * @param {function} api.resolve
+ * A function that takes an optional data parameter and resolves a promise with it.
+ *
+ * Passing in anything other than a function will throw {@link external:TypeError TypeError} = `Function 'resolve' must be specified.`
+ *
+ * @param {function} api.reject
+ * A function that takes an optional error parameter and rejects a promise with it.
+ *
+ * Passing in anything other than a function will throw {@link external:TypeError TypeError} = `Function 'reject' must be specified.`
+ *
+ * @param {function} api.all
+ * A function that resolves an array of promises.
+ *
+ * Passing in anything other than a function will throw {@link external:TypeError TypeError} = `Function 'all' must be specified.`
+ *
+ * @returns {PromiseAdapter}
+ */
+class PromiseAdapter {
+    constructor(api) {
+
+        if (!api || typeof api !== 'object') {
+            throw new TypeError('Adapter requires an api configuration object.');
+        }
+
+        this.create = api.create;
+        this.resolve = api.resolve;
+        this.reject = api.reject;
+        this.all = api.all;
+
+        if (typeof this.create !== 'function') {
+            throw new TypeError('Function \'create\' must be specified.');
+        }
+
+        if (typeof this.resolve !== 'function') {
+            throw new TypeError('Function \'resolve\' must be specified.');
+        }
+
+        if (typeof this.reject !== 'function') {
+            throw new TypeError('Function \'reject\' must be specified.');
+        }
+
+        if (typeof this.all !== 'function') {
+            throw new TypeError('Function \'all\' must be specified.');
+        }
+    }
+}
+
+module.exports = PromiseAdapter;
+
+
+/***/ }),
+/* 36 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    os: __webpack_require__(2),
+    utils: __webpack_require__(0),
+    formatting: __webpack_require__(3),
+    patterns: __webpack_require__(23)
+};
+
+/**
+ *
+ * @class helpers.Column
+ * @description
+ *
+ * It is a read-only structure that contains details for a single column, to be primarily used by {@link helpers.ColumnSet ColumnSet}.
+ *
+ * The class parses and validates all the details, and prepares them for high-performance query generation.
+ *
+ * @param {string|helpers.ColumnConfig} col
+ * Column details, depending on the type.
+ *
+ * When it is a string, it is expected to contain a name for both the column and the source property, assuming that the two are the same.
+ * The name must adhere to JavaScript syntax for variable names. The name can be appended with any format modifier as supported by
+ * {@link formatting.format as.format} (`^`, `~`, `#`, `:csv`, `:list`, `:json`, `:alias`, `:name`, `:raw`, `:value`), which is then removed from the name and put
+ * into property `mod`. If the name starts with `?`, it is removed, while setting flag `cnd` = `true`.
+ *
+ * If the string doesn't adhere to the above requirements, the method will throw {@link external:TypeError TypeError} = `Invalid column syntax`.
+ *
+ * When `col` is a simple {@link helpers.ColumnConfig ColumnConfig}-like object, it is used as an input configurator to set all the properties
+ * of the class.
+ *
+ * @property {string} name
+ * Destination column name + source property name (if `prop` is skipped). The name must adhere to JavaScript syntax for variables,
+ * unless `prop` is specified, in which case `name` represents only the column name, and therefore can be any non-empty string.
+ *
+ * @property {string} [prop]
+ * Source property name, if different from the column's name. It must adhere to JavaScript syntax for variables.
+ *
+ * It is ignored when it is the same as `name`.
+ *
+ * @property {string} [mod]
+ * Formatting modifier, as supported by method {@link formatting.format as.format}: `^`, `~`, `#`, `:csv`, `:list`, `:json`, `:alias`, `:name`, `:raw`, `:value`.
+ *
+ * @property {string} [cast]
+ * Server-side type casting, without `::` in front.
+ *
+ * @property {boolean} [cnd]
+ * Conditional column flag.
+ *
+ * Used by methods {@link helpers.update update} and {@link helpers.sets sets}, ignored by methods {@link helpers.insert insert} and
+ * {@link helpers.values values}. It indicates that the column is reserved for a `WHERE` condition, not to be set or updated.
+ *
+ * It can be set from a string initialization, by adding `?` in front of the name.
+ *
+ * @property {*} [def]
+ * Default value for the property, to be used only when the source object doesn't have the property.
+ * It is ignored when property `init` is set.
+ *
+ * @property {helpers.initCB} [init]
+ * Override callback for the value.
+ *
+ * @property {helpers.skipCB} [skip]
+ * An override for skipping columns dynamically.
+ *
+ * Used by methods {@link helpers.update update} (for a single object) and {@link helpers.sets sets}, ignored by methods
+ * {@link helpers.insert insert} and {@link helpers.values values}.
+ *
+ * It is also ignored when conditional flag `cnd` is set.
+ *
+ * @returns {helpers.Column}
+ *
+ * @see
+ * {@link helpers.ColumnConfig ColumnConfig},
+ * {@link helpers.Column#castText castText},
+ * {@link helpers.Column#escapedName escapedName},
+ * {@link helpers.Column#variable variable}
+ *
+ * @example
+ *
+ * const pgp = require('pg-promise')({
+ *     capSQL: true // if you want all generated SQL capitalized
+ * });
+ *
+ * const Column = pgp.helpers.Column;
+ *
+ * // creating a column from just a name:
+ * const col1 = new Column('colName');
+ * console.log(col1);
+ * //=>
+ * // Column {
+ * //    name: "colName"
+ * // }
+ *
+ * // creating a column from a name + modifier:
+ * const col2 = new Column('colName:csv');
+ * console.log(col2);
+ * //=>
+ * // Column {
+ * //    name: "colName"
+ * //    mod: ":csv"
+ * // }
+ *
+ * // creating a column from a configurator:
+ * const col3 = new Column({
+ *     name: 'colName', // required
+ *     prop: 'propName', // optional
+ *     mod: '^', // optional
+ *     def: 123 // optional
+ * });
+ * console.log(col3);
+ * //=>
+ * // Column {
+ * //    name: "colName"
+ * //    prop: "propName"
+ * //    mod: "^"
+ * //    def: 123
+ * // }
+ *
+ */
+function Column(col) {
+
+    if (!(this instanceof Column)) {
+        return new Column(col);
+    }
+
+    if (typeof col === 'string') {
+        const info = parseColumn(col);
+        this.name = info.name;
+        if ('mod' in info) {
+            this.mod = info.mod;
+        }
+        if ('cnd' in info) {
+            this.cnd = info.cnd;
+        }
+    } else {
+        if (col && typeof col === 'object' && 'name' in col) {
+            if (!npm.utils.isText(col.name)) {
+                throw new TypeError('Invalid \'name\' value: ' + JSON.stringify(col.name) + '. A non-empty string was expected.');
+            }
+            if (npm.utils.isNull(col.prop) && !isValidVariable(col.name)) {
+                throw new TypeError('Invalid \'name\' syntax: ' + JSON.stringify(col.name) + '.');
+            }
+            this.name = col.name; // column name + property name (if 'prop' isn't specified)
+
+            if (!npm.utils.isNull(col.prop)) {
+                if (!npm.utils.isText(col.prop)) {
+                    throw new TypeError('Invalid \'prop\' value: ' + JSON.stringify(col.prop) + '. A non-empty string was expected.');
+                }
+                if (!isValidVariable(col.prop)) {
+                    throw new TypeError('Invalid \'prop\' syntax: ' + JSON.stringify(col.prop) + '.');
+                }
+                if (col.prop !== col.name) {
+                    // optional property name, if different from the column's name;
+                    this.prop = col.prop;
+                }
+            }
+            if (!npm.utils.isNull(col.mod)) {
+                if (typeof col.mod !== 'string' || !isValidMod(col.mod)) {
+                    throw new TypeError('Invalid \'mod\' value: ' + JSON.stringify(col.mod) + '.');
+                }
+                this.mod = col.mod; // optional format modifier;
+            }
+            if (!npm.utils.isNull(col.cast)) {
+                this.cast = parseCast(col.cast); // optional SQL type casting
+            }
+            if ('cnd' in col) {
+                this.cnd = !!col.cnd;
+            }
+            if ('def' in col) {
+                this.def = col.def; // optional default
+            }
+            if (typeof col.init === 'function') {
+                this.init = col.init; // optional value override (overrides 'def' also)
+            }
+            if (typeof col.skip === 'function') {
+                this.skip = col.skip;
+            }
+        } else {
+            throw new TypeError('Invalid column details.');
+        }
+    }
+
+    const variable = '${' + (this.prop || this.name) + (this.mod || '') + '}',
+        castText = this.cast ? ('::' + this.cast) : '',
+        escapedName = npm.formatting.as.name(this.name);
+
+    /**
+     * @name helpers.Column#variable
+     * @type string
+     * @readonly
+     * @description
+     * Full-syntax formatting variable, ready for direct use in query templates.
+     *
+     * @example
+     *
+     * const cs = new pgp.helpers.ColumnSet([
+     *     'id',
+     *     'coordinate:json',
+     *     {
+     *         name: 'places',
+     *         mod: ':csv',
+     *         cast: 'int[]'
+     *     }
+     * ]);
+     *
+     * // cs.columns[0].variable = ${id}
+     * // cs.columns[1].variable = ${coordinate:json}
+     * // cs.columns[2].variable = ${places:csv}::int[]
+     */
+    Object.defineProperty(this, 'variable', {
+        value: variable,
+        enumerable: true
+    });
+
+    /**
+     * @name helpers.Column#castText
+     * @type string
+     * @readonly
+     * @description
+     * Full-syntax sql type casting, if there is any, or else an empty string.
+     */
+    Object.defineProperty(this, 'castText', {
+        value: castText,
+        enumerable: true
+    });
+
+    /**
+     * @name helpers.Column#escapedName
+     * @type string
+     * @readonly
+     * @description
+     * Escaped name of the column, ready to be injected into queries directly.
+     *
+     */
+    Object.defineProperty(this, 'escapedName', {
+        value: escapedName,
+        enumerable: true
+    });
+
+    Object.freeze(this);
+}
+
+function parseCast(name) {
+    if (typeof name === 'string') {
+        const s = name.replace(/^[:\s]*|\s*$/g, '');
+        if (s) {
+            return s;
+        }
+    }
+    throw new TypeError('Invalid \'cast\' value: ' + JSON.stringify(name) + '.');
+}
+
+function parseColumn(name) {
+    const m = name.match(npm.patterns.validColumn);
+    if (m && m[0] === name) {
+        const res = {};
+        if (name[0] === '?') {
+            res.cnd = true;
+            name = name.substr(1);
+        }
+        const mod = name.match(npm.patterns.hasValidModifier);
+        if (mod) {
+            res.name = name.substr(0, mod.index);
+            res.mod = mod[0];
+        } else {
+            res.name = name;
+        }
+        return res;
+    }
+    throw new TypeError('Invalid column syntax: ' + JSON.stringify(name) + '.');
+}
+
+function isValidMod(mod) {
+    return npm.patterns.validModifiers.indexOf(mod) !== -1;
+}
+
+function isValidVariable(name) {
+    const m = name.match(npm.patterns.validVariable);
+    return !!m && m[0] === name;
+}
+
+/**
+ * @method helpers.Column#toString
+ * @description
+ * Creates a well-formatted multi-line string that represents the object.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * @param {number} [level=0]
+ * Nested output level, to provide visual offset.
+ *
+ * @returns {string}
+ */
+Column.prototype.toString = function (level) {
+    level = level > 0 ? parseInt(level) : 0;
+    const gap0 = npm.utils.messageGap(level),
+        gap1 = npm.utils.messageGap(level + 1),
+        lines = [
+            gap0 + 'Column {',
+            gap1 + 'name: ' + JSON.stringify(this.name)
+        ];
+    if ('prop' in this) {
+        lines.push(gap1 + 'prop: ' + JSON.stringify(this.prop));
+    }
+    if ('mod' in this) {
+        lines.push(gap1 + 'mod: ' + JSON.stringify(this.mod));
+    }
+    if ('cast' in this) {
+        lines.push(gap1 + 'cast: ' + JSON.stringify(this.cast));
+    }
+    if ('cnd' in this) {
+        lines.push(gap1 + 'cnd: ' + JSON.stringify(this.cnd));
+    }
+    if ('def' in this) {
+        lines.push(gap1 + 'def: ' + JSON.stringify(this.def));
+    }
+    if ('init' in this) {
+        lines.push(gap1 + 'init: [Function]');
+    }
+    if ('skip' in this) {
+        lines.push(gap1 + 'skip: [Function]');
+    }
+    lines.push(gap0 + '}');
+    return lines.join(npm.os.EOL);
+};
+
+npm.utils.addInspection(Column, function () {
+    return this.toString();
+});
+
+/**
+ * @typedef helpers.ColumnConfig
+ * @description
+ * A simple structure with column details, to be passed into the {@link helpers.Column Column} constructor for initialization.
+ *
+ * @property {string} name
+ * Destination column name + source property name (if `prop` is skipped). The name must adhere to JavaScript syntax for variables,
+ * unless `prop` is specified, in which case `name` represents only the column name, and therefore can be any non-empty string.
+ *
+ * @property {string} [prop]
+ * Source property name, if different from the column's name. It must adhere to JavaScript syntax for variables.
+ *
+ * It is ignored when it is the same as `name`.
+ *
+ * @property {string} [mod]
+ * Formatting modifier, as supported by method {@link formatting.format as.format}: `^`, `~`, `#`, `:csv`, `:list`, `:json`, `:alias`, `:name`, `:raw`, `:value`.
+ *
+ * @property {string} [cast]
+ * Server-side type casting. Leading `::` is allowed, but not needed (automatically removed when specified).
+ *
+ * @property {boolean} [cnd]
+ * Conditional column flag.
+ *
+ * Used by methods {@link helpers.update update} and {@link helpers.sets sets}, ignored by methods {@link helpers.insert insert} and
+ * {@link helpers.values values}. It indicates that the column is reserved for a `WHERE` condition, not to be set or updated.
+ *
+ * It can be set from a string initialization, by adding `?` in front of the name.
+ *
+ * @property {*} [def]
+ * Default value for the property, to be used only when the source object doesn't have the property.
+ * It is ignored when property `init` is set.
+ *
+ * @property {helpers.initCB} [init]
+ * Override callback for the value.
+ *
+ * @property {helpers.skipCB} [skip]
+ * An override for skipping columns dynamically.
+ *
+ * Used by methods {@link helpers.update update} (for a single object) and {@link helpers.sets sets}, ignored by methods
+ * {@link helpers.insert insert} and {@link helpers.values values}.
+ *
+ * It is also ignored when conditional flag `cnd` is set.
+ *
+ */
+
+/**
+ * @callback helpers.initCB
+ * @description
+ * A callback function type used by parameter `init` within {@link helpers.ColumnConfig ColumnConfig}.
+ *
+ * It works as an override for the corresponding property value in the `source` object.
+ *
+ * The function is called with `this` set to the `source` object.
+ *
+ * @param {*} col
+ * Column-to-property descriptor.
+ *
+ * @param {object} col.source
+ * The source object, equals to `this` that's passed into the function.
+ *
+ * @param {string} col.name
+ * Resolved name of the property within the `source` object, i.e. the value of `name` when `prop` is not used
+ * for the column, or the value of `prop` when it is specified.
+ *
+ * @param {*} col.value
+ *
+ * Property value, set to one of the following:
+ *
+ * - Value of the property within the `source` object (`value` = `source[name]`), if the property exists
+ * - If the property doesn't exist and `def` is set in the column, then `value` is set to the value of `def`
+ * - If the property doesn't exist and `def` is not set in the column, then `value` is set to `undefined`
+ *
+ * @param {boolean} col.exists
+ * Indicates whether the property exists in the `source` object (`exists = name in source`).
+ *
+ * @returns {*}
+ * The new value to be used for the corresponding column.
+ */
+
+/**
+ * @callback helpers.skipCB
+ * @description
+ * A callback function type used by parameter `skip` within {@link helpers.ColumnConfig ColumnConfig}.
+ *
+ * It is to dynamically determine when the property with specified `name` in the `source` object is to be skipped.
+ *
+ * The function is called with `this` set to the `source` object.
+ *
+ * @param {*} col
+ * Column-to-property descriptor.
+ *
+ * @param {object} col.source
+ * The source object, equals to `this` that's passed into the function.
+ *
+ * @param {string} col.name
+ * Resolved name of the property within the `source` object, i.e. the value of `name` when `prop` is not used
+ * for the column, or the value of `prop` when it is specified.
+ *
+ * @param {*} col.value
+ *
+ * Property value, set to one of the following:
+ *
+ * - Value of the property within the `source` object (`value` = `source[name]`), if the property exists
+ * - If the property doesn't exist and `def` is set in the column, then `value` is set to the value of `def`
+ * - If the property doesn't exist and `def` is not set in the column, then `value` is set to `undefined`
+ *
+ * @param {boolean} col.exists
+ * Indicates whether the property exists in the `source` object (`exists = name in source`).
+ *
+ * @returns {boolean}
+ * A truthy value that indicates whether the column is to be skipped.
+ *
+ */
+
+module.exports = Column;
+
+
+/***/ }),
+/* 37 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    fs: __webpack_require__(15),
+    path: __webpack_require__(4),
+    utils: __webpack_require__(0),
+    package: __webpack_require__(38)
+};
+
+const EOL = __webpack_require__(2).EOL;
+
+/**
+ * @method utils.camelize
+ * @description
+ * Camelizes a text string.
+ *
+ * Case-changing characters include:
+ * - _hyphen_
+ * - _underscore_
+ * - _period_
+ * - _space_
+ *
+ * @param {string} text
+ * Input text string.
+ *
+ * @returns {string}
+ * Camelized text string.
+ *
+ * @see
+ * {@link utils.camelizeVar camelizeVar}
+ *
+ */
+function camelize(text) {
+    text = text.replace(/[-_\s.]+(.)?/g, (match, chr) => {
+        return chr ? chr.toUpperCase() : '';
+    });
+    return text.substr(0, 1).toLowerCase() + text.substr(1);
+}
+
+/**
+ * @method utils.camelizeVar
+ * @description
+ * Camelizes a text string, while making it compliant with JavaScript variable names:
+ * - contains symbols `a-z`, `A-Z`, `0-9`, `_` and `$`
+ * - cannot have leading digits
+ *
+ * First, it removes all symbols that do not meet the above criteria, except for _hyphen_, _period_ and _space_,
+ * and then it forwards into {@link utils.camelize camelize}.
+ *
+ * @param {string} text
+ * Input text string.
+ *
+ * If it doesn't contain any symbols to make up a valid variable name, the result will be an empty string.
+ *
+ * @returns {string}
+ * Camelized text string that can be used as an open property name.
+ *
+ * @see
+ * {@link utils.camelize camelize}
+ *
+ */
+function camelizeVar(text) {
+    text = text.replace(/[^a-zA-Z0-9$_\-\s.]/g, '').replace(/^[0-9_\-\s.]+/, '');
+    return camelize(text);
+}
+
+function _enumSql(dir, options, cb, namePath) {
+    const tree = {};
+    npm.fs.readdirSync(dir).forEach(file => {
+        let stat;
+        const fullPath = npm.path.join(dir, file);
+        try {
+            stat = npm.fs.statSync(fullPath);
+        } catch (e) {
+            // while it is very easy to test manually, it is very difficult to test for
+            // access-denied errors automatically; therefore excluding from the coverage:
+            // istanbul ignore next
+            if (options.ignoreErrors) {
+                return; // on to the next file/folder;
+            }
+            // istanbul ignore next
+            throw e;
+        }
+        if (stat.isDirectory()) {
+            if (options.recursive) {
+                const dirName = camelizeVar(file);
+                const np = namePath ? (namePath + '.' + dirName) : dirName;
+                const t = _enumSql(fullPath, options, cb, np);
+                if (Object.keys(t).length) {
+                    if (!dirName.length || dirName in tree) {
+                        if (!options.ignoreErrors) {
+                            throw new Error('Empty or duplicate camelized folder name: ' + fullPath);
+                        }
+                    }
+                    tree[dirName] = t;
+                }
+            }
+        } else {
+            if (npm.path.extname(file).toLowerCase() === '.sql') {
+                const name = camelizeVar(file.replace(/\.[^/.]+$/, ''));
+                if (!name.length || name in tree) {
+                    if (!options.ignoreErrors) {
+                        throw new Error('Empty or duplicate camelized file name: ' + fullPath);
+                    }
+                }
+                tree[name] = fullPath;
+                if (cb) {
+                    const result = cb(fullPath, name, namePath ? (namePath + '.' + name) : name);
+                    if (result !== undefined) {
+                        tree[name] = result;
+                    }
+                }
+            }
+        }
+    });
+    return tree;
+}
+
+/**
+ * @method utils.enumSql
+ * @description
+ * Synchronously enumerates all SQL files (within a given directory) into a camelized SQL tree.
+ *
+ * All property names within the tree are camelized via {@link utils.camelizeVar camelizeVar},
+ * so they can be used in the code directly, as open property names.
+ *
+ * @param {string} dir
+ * Directory path where SQL files are located, either absolute or relative to the current directory.
+ *
+ * SQL files are identified by using `.sql` extension (case-insensitive).
+ *
+ * @param {object} [options]
+ * Search options.
+ *
+ * @param {boolean} [options.recursive=false]
+ * Include sub-directories into the search.
+ *
+ * Sub-directories without SQL files will be skipped from the result.
+ *
+ * @param {boolean} [options.ignoreErrors=false]
+ * Ignore the following types of errors:
+ * - access errors, when there is no read access to a file or folder
+ * - empty or duplicate camelized property names
+ *
+ * This flag does not affect errors related to invalid input parameters, or if you pass in a
+ * non-existing directory.
+ *
+ * @param {function} [cb]
+ * A callback function that takes three arguments:
+ * - `file` - SQL file path, relative or absolute, according to how you specified the search directory
+ * - `name` - name of the property that represents the SQL file
+ * - `path` - property resolution path (full property name)
+ *
+ * If the function returns anything other than `undefined`, it overrides the corresponding property value in the tree.
+ *
+ * @returns {object}
+ * Camelized SQL tree object, with each value being an SQL file path (unless changed via the callback).
+ *
+ * @see
+ * {@link utils.objectToCode objectToCode},
+ * {@link utils.buildSqlModule buildSqlModule}
+ *
+ * @example
+ *
+ * // simple SQL tree generation for further processing:
+ * const tree = pgp.utils.enumSql('../sql', {recursive: true});
+ *
+ * @example
+ *
+ * // generating an SQL tree for dynamic use of names:
+ * const sql = pgp.utils.enumSql(__dirname, {recursive: true}, file=> {
+ *     return new pgp.QueryFile(file, {minify: true});
+ * });
+ *
+ * @example
+ *
+ * const path = require('path');
+ *
+ * // replacing each relative path in the tree with a full one:
+ * const tree = pgp.utils.enumSql('../sql', {recursive: true}, file=> {
+ *     return path.join(__dirname, file);
+ * });
+ *
+ */
+function enumSql(dir, options, cb) {
+    if (!npm.utils.isText(dir)) {
+        throw new TypeError('Parameter \'dir\' must be a non-empty text string.');
+    }
+    if (!options || typeof options !== 'object') {
+        options = {};
+    }
+    cb = (typeof cb === 'function') ? cb : null;
+    return _enumSql(dir, options, cb, '');
+}
+
+/**
+ *
+ * @method utils.objectToCode
+ * @description
+ * Translates an object tree into a well-formatted JSON code string.
+ *
+ * @param {object} obj
+ * Source tree object.
+ *
+ * @param {function} [cb]
+ * A callback function to override property values for the code.
+ *
+ * It takes three arguments:
+ *
+ * - `value` - property value
+ * - `name` - property name
+ * - `obj` - current object (which contains the property)
+ *
+ * The returned value is used as is for the property value in the generated code.
+ *
+ * @returns {string}
+ *
+ * @see
+ * {@link utils.enumSql enumSql},
+ * {@link utils.buildSqlModule buildSqlModule}
+ *
+ * @example
+ *
+ * // Generating code for a simple object
+ *
+ * const tree = {one: 1, two: {item: 'abc'}};
+ *
+ * const code = pgp.utils.objectToCode(tree);
+ *
+ * console.log(code);
+ * //=>
+ * // {
+ * //     one: 1,
+ * //     two: {
+ * //         item: "abc"
+ * //     }
+ * // }
+ *
+ * @example
+ *
+ * // Generating a Node.js module with an SQL tree
+ *
+ * const fs = require('fs');
+ * const EOL = require('os').EOL;
+ *
+ * // generating an SQL tree from the folder:
+ * const tree = pgp.utils.enumSql('./sql', {recursive: true});
+ *
+ * // generating the module's code:
+ * const code = "const load = require('./loadSql');" + EOL + EOL + "module.exports = " +
+ *         pgp.utils.objectToCode(tree, value => {
+ *             return 'load(' + JSON.stringify(value) + ')';
+ *         }) + ';';
+ *
+ * // saving the module:
+ * fs.writeFileSync('sql.js', code);
+ *
+ * @example
+ *
+ * // generated code example (file sql.js)
+ *
+ * const load = require('./loadSql');
+ *
+ * module.exports = {
+ *     events: {
+ *         add: load("../sql/events/add.sql"),
+ *         delete: load("../sql/events/delete.sql"),
+ *         find: load("../sql/events/find.sql"),
+ *         update: load("../sql/events/update.sql")
+ *     },
+ *     products: {
+ *         add: load("../sql/products/add.sql"),
+ *         delete: load("../sql/products/delete.sql"),
+ *         find: load("../sql/products/find.sql"),
+ *         update: load("../sql/products/update.sql")
+ *     },
+ *     users: {
+ *         add: load("../sql/users/add.sql"),
+ *         delete: load("../sql/users/delete.sql"),
+ *         find: load("../sql/users/find.sql"),
+ *         update: load("../sql/users/update.sql")
+ *     },
+ *     create: load("../sql/create.sql"),
+ *     init: load("../sql/init.sql"),
+ *     drop: load("../sql/drop.sql")
+ *};
+ *
+ * @example
+ *
+ * // loadSql.js module example
+ *
+ * const QueryFile = require('pg-promise').QueryFile;
+ *
+ * module.exports = file => {
+ *     return new QueryFile(file, {minify: true});
+ * };
+ *
+ */
+function objectToCode(obj, cb) {
+
+    if (!obj || typeof obj !== 'object') {
+        throw new TypeError('Parameter \'obj\' must be a non-null object.');
+    }
+
+    cb = (typeof cb === 'function') ? cb : null;
+
+    return '{' + generate(obj, 1) + EOL + '}';
+
+    function generate(obj, level) {
+        let code = '', idx = 0;
+        const gap = npm.utils.messageGap(level);
+        for (const prop in obj) {
+            const value = obj[prop];
+            if (idx) {
+                code += ',';
+            }
+            if (value && typeof value === 'object') {
+                code += EOL + gap + prop + ': {';
+                code += generate(value, level + 1);
+                code += EOL + gap + '}';
+            } else {
+                code += EOL + gap + prop + ': ';
+                if (cb) {
+                    code += cb(value, prop, obj);
+                } else {
+                    code += JSON.stringify(value);
+                }
+            }
+            idx++;
+        }
+        return code;
+    }
+}
+
+/**
+ * @method utils.buildSqlModule
+ * @description
+ * Synchronously generates a Node.js module with a camelized SQL tree, based on a configuration object that has the format shown below.
+ *
+ * This method is normally to be used on a grunt/gulp watch that triggers when the file structure changes in your SQL directory,
+ * although it can be invoked manually as well.
+ *
+ * ```js
+ * {
+ *    // Required Properties:
+ *    
+ *    "dir" // {string}: relative or absolute directory where SQL files are located (see API for method enumSql, parameter `dir`)
+ *
+ *    // Optional Properties:
+ *    
+ *    "recursive" // {boolean}: search for sql files recursively (see API for method enumSql, option `recursive`)
+ *
+ *    "ignoreErrors" // {boolean}: ignore common errors (see API for method enumSql, option `ignoreErrors`)
+ *
+ *    "output" // {string}: relative or absolute destination file path; when not specified, no file is created,
+ *             // but you still can use the code string that's always returned by the method.
+ *     
+ *    "module": {
+ *        "path" // {string}: relative path to a module exporting a function which takes a file path
+ *               // and returns a proper value (typically, a new QueryFile object); by default, it uses `./loadSql`.
+ *
+ *        "name" // {string}: local variable name for the SQL-loading module; by default, it uses `load`.
+ *    }
+ * }
+ * ```
+ *
+ * @param {object|string} [config]
+ * Configuration parameter for generating the code.
+ *
+ * - When it is a non-null object, it is assumed to be a configuration object (see the format above).
+ * - When it is a text string - it is the relative path to either a JSON file that contains the configuration object,
+ *   or a Node.js module that exports one. The path is relative to the application's entry point file.
+ * - When `config` isn't specified, the method will try to locate the default `sql-config.json` file in the directory of your
+ *   application's entry point file, and if not found - throw {@link external:Error Error} = `Default SQL configuration file not found`.
+ *
+ * @returns {string}
+ * Generated code.
+ *
+ * @see
+ * {@link utils.enumSql enumSql},
+ * {@link utils.objectToCode objectToCode}
+ *
+ * @example
+ *
+ * // generate SQL module automatically, from sql-config.json in the module's start-up folder:
+ *
+ * pgp.utils.buildSqlModule();
+ *
+ * // see generated file below:
+ *
+ * @example
+ *
+ * /////////////////////////////////////////////////////////////////////////
+ * // This file was automatically generated by pg-promise v.4.3.8
+ * //
+ * // Generated on: 6/2/2016, at 2:15:23 PM
+ * // Total files: 15
+ * //
+ * // API: http://vitaly-t.github.io/pg-promise/utils.html#.buildSqlModule
+ * /////////////////////////////////////////////////////////////////////////
+ *
+ * const load = require('./loadSql');
+ *
+ * module.exports = {
+ *     events: {
+ *         add: load("../sql/events/add.sql"),
+ *         delete: load("../sql/events/delete.sql"),
+ *         find: load("../sql/events/find.sql"),
+ *         update: load("../sql/events/update.sql")
+ *     },
+ *     products: {
+ *         add: load("../sql/products/add.sql"),
+ *         delete: load("../sql/products/delete.sql"),
+ *         find: load("../sql/products/find.sql"),
+ *         update: load("../sql/products/update.sql")
+ *     },
+ *     users: {
+ *         add: load("../sql/users/add.sql"),
+ *         delete: load("../sql/users/delete.sql"),
+ *         find: load("../sql/users/find.sql"),
+ *         update: load("../sql/users/update.sql")
+ *     },
+ *     create: load("../sql/create.sql"),
+ *     init: load("../sql/init.sql"),
+ *     drop: load("../sql/drop.sql")
+ *};
+ *
+ */
+function buildSqlModule(config) {
+
+    if (npm.utils.isText(config)) {
+        const path = npm.utils.isPathAbsolute(config) ? config : npm.path.join(npm.utils.startDir, config);
+        config = !(function webpackMissingModule() { var e = new Error("Cannot find module \".\""); e.code = 'MODULE_NOT_FOUND'; throw e; }());
+    } else {
+        if (npm.utils.isNull(config)) {
+            const defConfig = npm.path.join(npm.utils.startDir, 'sql-config.json');
+            // istanbul ignore else;
+            if (!npm.fs.existsSync(defConfig)) {
+                throw new Error('Default SQL configuration file not found: ' + defConfig);
+            }
+            // cannot test this automatically, because it requires that file 'sql-config.json'
+            // resides within the Jasmine folder, since it is the client during the test.
+            // istanbul ignore next;
+            config = !(function webpackMissingModule() { var e = new Error("Cannot find module \".\""); e.code = 'MODULE_NOT_FOUND'; throw e; }());
+        } else {
+            if (!config || typeof config !== 'object') {
+                throw new TypeError('Invalid parameter \'config\' specified.');
+            }
+        }
+    }
+
+    if (!npm.utils.isText(config.dir)) {
+        throw new Error('Property \'dir\' must be a non-empty string.');
+    }
+
+    let total = 0;
+
+    const tree = enumSql(config.dir, {recursive: config.recursive, ignoreErrors: config.ignoreErrors}, () => {
+        total++;
+    });
+
+    let modulePath = './loadSql', moduleName = 'load';
+    if (config.module && typeof config.module === 'object') {
+        if (npm.utils.isText(config.module.path)) {
+            modulePath = config.module.path;
+        }
+        if (npm.utils.isText(config.module.name)) {
+            moduleName = config.module.name;
+        }
+    }
+
+    const d = new Date();
+
+    const header =
+        '/////////////////////////////////////////////////////////////////////////' + EOL +
+        '// This file was automatically generated by pg-promise v.' + npm.package.version + EOL +
+        '//' + EOL +
+        '// Generated on: ' + d.toLocaleDateString() + ', at ' + d.toLocaleTimeString() + EOL +
+        '// Total files: ' + total + EOL +
+        '//' + EOL +
+        '// API: http://vitaly-t.github.io/pg-promise/utils.html#.buildSqlModule' + EOL +
+        '/////////////////////////////////////////////////////////////////////////' + EOL + EOL +
+        '\'use strict\';' + EOL + EOL +
+        'const ' + moduleName + ' = require(\'' + modulePath + '\');' + EOL + EOL +
+        'module.exports = ';
+
+    const code = header + objectToCode(tree, value => {
+        return moduleName + '(' + JSON.stringify(value) + ')';
+    }) + ';';
+
+    if (npm.utils.isText(config.output)) {
+        let p = config.output;
+        if (!npm.utils.isPathAbsolute(p)) {
+            p = npm.path.join(npm.utils.startDir, p);
+        }
+        npm.fs.writeFileSync(p, code);
+    }
+
+    return code;
+}
+
+/**
+ * @method utils.taskArgs
+ * @description
+ * Normalizes/prepares arguments for tasks and transactions.
+ *
+ * Its main purpose is to simplify adding custom methods {@link Database#task task}, {@link Database#taskIf taskIf},
+ * {@link Database#tx tx} and {@link Database#txIf txIf} within event {@link event:extend extend}, as the those methods use fairly
+ * complex logic for parsing inputs.
+ *
+ * @param args {Object}
+ * Array-like object of `arguments` that was passed into the method. It is expected that the `arguments`
+ * are always made of two parameters - `(options, cb)`, same as all the default task/transaction methods.
+ *
+ * And if your custom method needs additional parameters, they should be passed in as extra properties within `options`.
+ *
+ * @returns {Array}
+ * Array of arguments that can be passed into a task or transaction.
+ *
+ * It is extended with properties `options` and `cb` to access the corresponding array elements `[0]` and `[1]` by name.
+ *
+ * @example
+ *
+ * // Registering a custom transaction method that assigns a default Transaction Mode:
+ *
+ * const initOptions = {
+ *     extend: obj => {
+ *         obj.myTx = function(options, cb) {
+ *             const args = pgp.utils.taskArgs(arguments); // prepare arguments
+ *
+ *             if (!('mode' in args.options)) {
+ *                 // if no 'mode' was specified, set default for transaction mode:
+ *                 args.options.mode = myTxModeObject; // of type pgp.txMode.TransactionMode
+ *             }
+ *
+ *             return obj.tx.apply(this, args);
+ *             // or explicitly, if needed:
+ *             // return obj.tx.call(this, args.options, args.cb);
+ *         }
+ *     }
+ * };
+ *
+ */
+function taskArgs(args) {
+
+    if (!args || typeof args.length !== 'number') {
+        throw new TypeError('Parameter "args" must be an array-like object of arguments.');
+    }
+
+    let options = args[0], cb;
+    if (typeof options === 'function') {
+        cb = options;
+        options = {};
+        if (cb.name) {
+            options.tag = cb.name;
+        }
+    } else {
+        if (typeof args[1] === 'function') {
+            cb = args[1];
+        }
+        if (typeof options === 'string' || typeof options === 'number') {
+            options = {tag: options};
+        } else {
+            options = (typeof options === 'object' && options) || {};
+            if (!('tag' in options) && cb && cb.name) {
+                options.tag = cb.name;
+            }
+        }
+    }
+
+    const res = [options, cb];
+
+    Object.defineProperty(res, 'options', {
+        get: function () {
+            return this[0];
+        },
+        set: function (newValue) {
+            return this[0] = newValue;
+        },
+        enumerable: true
+    });
+
+    Object.defineProperty(res, 'cb', {
+        get: function () {
+            return this[1];
+        },
+        set: function (newValue) {
+            return this[1] = newValue;
+        },
+        enumerable: true
+    });
+
+    return res;
+}
+
+/**
+ * @namespace utils
+ *
+ * @description
+ * Namespace for general-purpose static functions, available as `pgp.utils`, before and after initializing the library.
+ *
+ * See also:
+ * - [Automatic SQL Trees](https://github.com/vitaly-t/pg-promise/issues/153)
+ * - [SQL Files](https://github.com/vitaly-t/pg-promise/wiki/SQL-Files)
+ *
+ * @property {function} camelize
+ * {@link utils.camelize camelize} - camelizes a text string
+ *
+ * @property {function} camelizeVar
+ * {@link utils.camelizeVar camelizeVar} - camelizes a text string as a variable
+ *
+ * @property {function} enumSql
+ * {@link utils.enumSql enumSql} - enumerates SQL files in a directory
+ *
+ * @property {function} objectToCode
+ * {@link utils.objectToCode objectToCode} - generates code from an object
+ *
+ * @property {function} buildSqlModule
+ * {@link utils.buildSqlModule buildSqlModule} - generates a complete Node.js module
+ *
+ * @property {function} taskArgs
+ * {@link utils.taskArgs taskArgs} - prepares arguments for tasks and transactions
+ */
+module.exports = {
+    camelize,
+    camelizeVar,
+    enumSql,
+    objectToCode,
+    buildSqlModule,
+    taskArgs
+};
+
+Object.freeze(module.exports);
+
+
+/***/ }),
+/* 38 */
+/***/ (function(module, exports) {
+
+module.exports = {"_from":"pg-promise@^8.4.4","_id":"pg-promise@8.4.4","_inBundle":false,"_integrity":"sha512-w36ocror49i4qVxQgodG7HX94dgnXMkcukSOViy5zFy5oWZ05/0YoxmCuMI3eH8NlbrKlNAbCaGYOJ7FoLzIjQ==","_location":"/pg-promise","_phantomChildren":{},"_requested":{"type":"range","registry":true,"raw":"pg-promise@^8.4.4","name":"pg-promise","escapedName":"pg-promise","rawSpec":"^8.4.4","saveSpec":null,"fetchSpec":"^8.4.4"},"_requiredBy":["#USER","/"],"_resolved":"https://registry.npmjs.org/pg-promise/-/pg-promise-8.4.4.tgz","_shasum":"49c37bf70c9a6f16e8310dd622121e54d4ae2abd","_spec":"pg-promise@^8.4.4","_where":"/home/anton/projects/technopark/js-tp-db","author":{"name":"Vitaly Tomilov","email":"vitaly.tomilov@gmail.com"},"bugs":{"url":"https://github.com/vitaly-t/pg-promise/issues","email":"vitaly.tomilov@gmail.com"},"bundleDependencies":false,"dependencies":{"manakin":"0.5.1","pg":"7.4.3","pg-minify":"0.5.4","spex":"2.0.2"},"deprecated":false,"description":"Promises interface for PostgreSQL","devDependencies":{"@types/node":"10.0.8","JSONStream":"1.3.2","bluebird":"3.5.1","coveralls":"3.0.1","eslint":"4.19.1","istanbul":"0.4.5","jasmine-node":"1.14.5","jsdoc":"3.5.5","pg-query-stream":"1.1.1","tslint":"5.10.0","typescript":"2.8.3"},"engines":{"node":">=4.5","npm":">=2.15"},"files":["lib","typescript"],"homepage":"https://github.com/vitaly-t/pg-promise","keywords":["pg","promise","postgres"],"license":"MIT","main":"lib/index.js","name":"pg-promise","repository":{"type":"git","url":"git+https://github.com/vitaly-t/pg-promise.git"},"scripts":{"coverage":"istanbul cover ./node_modules/jasmine-node/bin/jasmine-node test","doc":"jsdoc -c ./jsdoc/jsdoc.js ./jsdoc/README.md -t ./jsdoc/templates/custom","lint":"eslint ./lib ./test/*.js ./test/db","test":"jasmine-node test","test:native":"jasmine-node test --config PG_NATIVE true","travis":"npm run lint && npm run tslint && istanbul cover ./node_modules/jasmine-node/bin/jasmine-node test --captureExceptions && cat ./coverage/lcov.info | ./node_modules/coveralls/bin/coveralls.js && rm -rf ./coverage","tslint":"tslint ./typescript/*.ts"},"typings":"typescript/pg-promise.d.ts","version":"8.4.4"}
+
+/***/ }),
+/* 39 */
+/***/ (function(module, exports) {
+
+function webpackEmptyContext(req) {
+	throw new Error("Cannot find module '" + req + "'.");
+}
+webpackEmptyContext.keys = function() { return []; };
+webpackEmptyContext.resolve = webpackEmptyContext;
+module.exports = webpackEmptyContext;
+webpackEmptyContext.id = 39;
+
+/***/ }),
+/* 40 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    utils: __webpack_require__(0)
+};
+
+/**
+ * @enum {number}
+ * @alias txMode.isolationLevel
+ * @readonly
+ * @summary Transaction Isolation Level.
+ * @description
+ * The type is available from the {@link txMode} namespace.
+ *
+ * @see $[Transaction Isolation]
+ */
+const isolationLevel = {
+    /** Isolation level not specified. */
+    none: 0,
+
+    /** ISOLATION LEVEL SERIALIZABLE */
+    serializable: 1,
+
+    /** ISOLATION LEVEL REPEATABLE READ */
+    repeatableRead: 2,
+
+    /** ISOLATION LEVEL READ COMMITTED */
+    readCommitted: 3
+
+    // From the official documentation: http://www.postgresql.org/docs/9.5/static/sql-set-transaction.html
+    // The SQL standard defines one additional level, READ UNCOMMITTED. In PostgreSQL READ UNCOMMITTED is treated as READ COMMITTED.
+    // => skipping `READ UNCOMMITTED`.
+};
+
+Object.freeze(isolationLevel);
+
+/**
+ * @class txMode.TransactionMode
+ * @description
+ * **Alternative Syntax:** `TransactionMode({tiLevel, readOnly, deferrable})` &#8658; {@link TransactionMode}
+ *
+ * Constructs a complete transaction-opening command, based on the parameters:
+ *  - isolation level
+ *  - access mode
+ *  - deferrable mode
+ *
+ * The type is available from the {@link txMode} namespace.
+ *
+ * @param {txMode.isolationLevel|object} [tiLevel]
+ * Transaction Isolation Level, or an object with parameters, if the alternative
+ * syntax is used.
+ *
+ * @param {boolean} [readOnly]
+ * Sets transaction access mode based on the read-only flag:
+ *  - `undefined` - access mode not specified (default)
+ *  - `true` - access mode is set to `READ ONLY`
+ *  - `false` - access mode is set to `READ WRITE`
+ *
+ * @param {boolean} [deferrable]
+ * Sets transaction deferrable mode based on the boolean value:
+ *  - `undefined` - deferrable mode not specified (default)
+ *  - `true` - mode is set to `DEFERRABLE`
+ *  - `false` - mode is set to `NOT DEFERRABLE`
+ *
+ * It is used only when `tiLevel`=`isolationLevel.serializable`
+ * and `readOnly`=`true`, or else it is ignored.
+ *
+ * @returns {txMode.TransactionMode}
+ *
+ * @see $[BEGIN], {@link txMode.isolationLevel}
+ *
+ * @example
+ *
+ * const TransactionMode = pgp.txMode.TransactionMode;
+ * const isolationLevel = pgp.txMode.isolationLevel;
+ *
+ * // Create a reusable transaction mode (serializable + read-only + deferrable):
+ * const mode = new TransactionMode({
+ *     tiLevel: isolationLevel.serializable,
+ *     readOnly: true,
+ *     deferrable: true
+ * });
+ *
+ * db.tx({mode}, t => {
+ *     return t.any('SELECT * FROM table');
+ * })
+ *     .then(data => {
+ *         // success;
+ *     })
+ *     .catch(error => {
+ *         // error
+ *     });
+ *
+ * // Instead of the default BEGIN, such transaction will start with:
+ *
+ * // BEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY DEFERRABLE
+ *
+ */
+function TransactionMode(tiLevel, readOnly, deferrable) {
+
+    if (!(this instanceof TransactionMode)) {
+        return new TransactionMode(tiLevel, readOnly, deferrable);
+    }
+
+    if (tiLevel && typeof tiLevel === 'object') {
+        readOnly = tiLevel.readOnly;
+        deferrable = tiLevel.deferrable;
+        tiLevel = tiLevel.tiLevel;
+    }
+
+    let level, accessMode, deferrableMode, capBegin, begin = 'begin';
+
+    tiLevel = (tiLevel > 0) ? parseInt(tiLevel) : 0;
+
+    if (tiLevel > 0 && tiLevel < 4) {
+        const values = ['serializable', 'repeatable read', 'read committed'];
+        level = 'isolation level ' + values[tiLevel - 1];
+    }
+
+    if (readOnly) {
+        accessMode = 'read only';
+    } else {
+        if (readOnly !== undefined) {
+            accessMode = 'read write';
+        }
+    }
+
+    // From the official documentation: http://www.postgresql.org/docs/9.5/static/sql-set-transaction.html
+    // The DEFERRABLE transaction property has no effect unless the transaction is also SERIALIZABLE and READ ONLY
+    if (tiLevel === isolationLevel.serializable && readOnly) {
+        if (deferrable) {
+            deferrableMode = 'deferrable';
+        } else {
+            if (deferrable !== undefined) {
+                deferrableMode = 'not deferrable';
+            }
+        }
+    }
+
+    if (level) {
+        begin += ' ' + level;
+    }
+
+    if (accessMode) {
+        begin += ' ' + accessMode;
+    }
+
+    if (deferrableMode) {
+        begin += ' ' + deferrableMode;
+    }
+
+    capBegin = begin.toUpperCase();
+
+    /**
+     * @method txMode.TransactionMode#begin
+     * @description
+     * Returns a complete BEGIN statement, according to all the parameters passed into the class.
+     *
+     * This method is primarily for internal use by the library.
+     *
+     * @param {boolean} [cap=false]
+     * Indicates whether the returned SQL must be capitalized.
+     *
+     * @returns {string}
+     */
+    this.begin = cap => {
+        return cap ? capBegin : begin;
+    };
+}
+
+npm.utils.addInspection(TransactionMode, function () {
+    return this.begin(true);
+});
+
+/**
+ * @namespace txMode
+ * @description
+ * Transaction Mode namespace, available as `pgp.txMode`, before and after initializing the library.
+ *
+ * Extends the default `BEGIN` with Transaction Mode parameters:
+ *  - isolation level
+ *  - access mode
+ *  - deferrable mode
+ *
+ * @property {function} TransactionMode
+ * {@link txMode.TransactionMode TransactionMode} class constructor.
+ *
+ * @property {txMode.isolationLevel} isolationLevel
+ * Transaction Isolation Level enumerator
+ *
+ * @see $[BEGIN]
+ */
+module.exports = {
+    isolationLevel,
+    TransactionMode
+};
+
+Object.freeze(module.exports);
+
+
+/***/ }),
+/* 41 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    utils: __webpack_require__(0),
+    PS: __webpack_require__(99),
+    PQ: __webpack_require__(100)
+};
+
+// istanbul ignore next;
+class ExternalQuery {
+}
+
+npm.utils.addInspection(ExternalQuery, function () {
+    return this.toString();
+});
+
+npm.utils.inherits(npm.PS, ExternalQuery);
+npm.utils.inherits(npm.PQ, ExternalQuery);
+
+module.exports = {
+    ExternalQuery,
+    PreparedStatement: npm.PS,
+    ParameterizedQuery: npm.PQ
+};
+
+
+/***/ }),
+/* 42 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    con: __webpack_require__(7).local,
+    utils: __webpack_require__(0)
+};
+
+/**
+ * @class DatabasePool
+ * @private
+ */
+class DatabasePool {
+
+    constructor() {
+        this.dbMap = {}; // map of used database context keys (connection + dc)
+        this.dbs = []; // all database objects
+    }
+
+    /**
+     * @method DatabasePool.register
+     * @private
+     * @description
+     *  - Registers each database object, to make sure no duplicates connections are used,
+     *    and if they are, produce a warning;
+     *  - Registers each Pool object, to be able to release them all when requested.
+     *
+     * @param {Database} db - The new Database object being registered.
+     */
+    register(db) {
+        const cnKey = DatabasePool.createContextKey(db);
+        npm.utils.addReadProp(db, '$cnKey', cnKey, true);
+        if (cnKey in this.dbMap) {
+            this.dbMap[cnKey]++;
+            if (!db.$config.options.noWarnings) {
+                npm.con.warn('WARNING: Creating a duplicate database object for the same connection.\n%s\n',
+                    npm.utils.getLocalStack(5));
+            }
+        } else {
+            this.dbMap[cnKey] = 1;
+        }
+        this.dbs.push(db);
+    }
+
+    /**
+     * @method DatabasePool.unregister
+     * @param db
+     */
+    unregister(db) {
+        const cnKey = db.$cnKey;
+        if (!--this.dbMap[cnKey]) {
+            delete this.dbMap[cnKey];
+        }
+    }
+
+    /**
+     * @method DatabasePool.shutDown
+     * @private
+     */
+    shutDown() {
+        this.dbs.forEach(db => {
+            db.$destroy();
+        });
+        this.dbs.length = 0;
+        this.dbMap = {};
+    }
+
+    /**
+     * @method DatabasePool.createContextKey
+     * @static
+     * @private
+     * @description
+     * For connections that are objects it reorders the keys alphabetically,
+     * and then serializes the result into a JSON string.
+     *
+     * @param {Database} db - Database instance.
+     */
+    static createContextKey(db) {
+        let cn = db.$cn;
+        if (typeof cn === 'object') {
+            const obj = {}, keys = Object.keys(cn).sort();
+            keys.forEach(name => {
+                obj[name] = cn[name];
+            });
+            cn = obj;
+        }
+        return JSON.stringify(npm.utils.getSafeConnection(cn)) + JSON.stringify(db.$dc);
+    }
+}
+
+module.exports = new DatabasePool();
+
+
+/***/ }),
+/* 43 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+/////////////////////////////
+// Special Query type;
+class SpecialQuery {
+    constructor(type) {
+        this[type] = true;
+    }
+}
+
+const cache = {
+    resultQuery: new SpecialQuery('isResult'),
+    multiResultQuery: new SpecialQuery('isMultiResult'),
+    streamQuery: new SpecialQuery('isStream')
+};
+
+module.exports = {
+    SpecialQuery,
+    cache
+};
+
+
+/***/ }),
+/* 44 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    util: __webpack_require__(1),
+    utils: __webpack_require__(0),
+    special: __webpack_require__(43),
+    QueryFile: __webpack_require__(10),
+    formatting: __webpack_require__(3),
+    result: __webpack_require__(22),
+    errors: __webpack_require__(19),
+    events: __webpack_require__(12),
+    stream: __webpack_require__(104),
+    types: __webpack_require__(41),
+    text: __webpack_require__(6)
+};
+
+const QueryResultError = npm.errors.QueryResultError,
+    InternalError = npm.utils.InternalError,
+    ExternalQuery = npm.types.ExternalQuery,
+    PreparedStatement = npm.types.PreparedStatement,
+    ParameterizedQuery = npm.types.ParameterizedQuery,
+    SpecialQuery = npm.special.SpecialQuery,
+    qrec = npm.errors.queryResultErrorCode;
+
+const badMask = npm.result.one | npm.result.many; // unsupported combination bit-mask;
+
+//////////////////////////////
+// Generic query method;
+function $query(ctx, query, values, qrm, config) {
+
+    const special = qrm instanceof SpecialQuery && qrm;
+    const $p = config.promise;
+
+    if (special && special.isStream) {
+        return npm.stream.call(this, ctx, query, values, config);
+    }
+
+    const opt = ctx.options,
+        capSQL = opt.capSQL;
+
+    let error, isFunc,
+        pgFormatting = opt.pgFormatting,
+        params = pgFormatting ? values : undefined;
+
+    if (typeof query === 'function') {
+        try {
+            query = npm.formatting.resolveFunc(query, values);
+        } catch (e) {
+            error = e;
+            params = values;
+            query = npm.util.inspect(query);
+        }
+    }
+
+    if (!error && !query) {
+        error = new TypeError(npm.text.invalidQuery);
+    }
+
+    if (!error && typeof query === 'object') {
+        if (query instanceof npm.QueryFile) {
+            query.prepare();
+            if (query.error) {
+                error = query.error;
+                query = query.file;
+            } else {
+                query = query[npm.QueryFile.$query];
+            }
+        } else {
+            if ('funcName' in query) {
+                isFunc = true;
+                query = query.funcName; // query is a function name;
+            } else {
+                if (query instanceof ExternalQuery) {
+                    pgFormatting = true;
+                } else {
+                    if ('name' in query) {
+                        query = new PreparedStatement(query);
+                        pgFormatting = true;
+                    } else {
+                        if ('text' in query) {
+                            query = new ParameterizedQuery(query);
+                            pgFormatting = true;
+                        }
+                    }
+                }
+                if (query instanceof ExternalQuery && !npm.utils.isNull(values)) {
+                    query.values = values;
+                }
+            }
+        }
+    }
+
+    if (!error) {
+        if (!pgFormatting && !npm.utils.isText(query)) {
+            error = new TypeError(isFunc ? npm.text.invalidFunction : npm.text.invalidQuery);
+        }
+        if (query instanceof ExternalQuery) {
+            const qp = query.parse();
+            if (qp instanceof Error) {
+                error = qp;
+            } else {
+                query = qp;
+            }
+        }
+    }
+
+    if (!error && !special) {
+        if (npm.utils.isNull(qrm)) {
+            qrm = npm.result.any; // default query result;
+        } else {
+            if (qrm !== parseInt(qrm) || (qrm & badMask) === badMask || qrm < 1 || qrm > 6) {
+                error = new TypeError(npm.text.invalidMask);
+            }
+        }
+    }
+
+    if (!error && (!pgFormatting || isFunc)) {
+        try {
+            // use 'pg-promise' implementation of values formatting;
+            if (isFunc) {
+                params = undefined;
+                query = npm.formatting.formatFunction(query, values, capSQL);
+            } else {
+                query = npm.formatting.formatQuery(query, values);
+            }
+        } catch (e) {
+            if (isFunc) {
+                const prefix = capSQL ? 'SELECT * FROM' : 'select * from';
+                query = prefix + ' ' + query + '(...)';
+            } else {
+                params = values;
+            }
+            error = e instanceof Error ? e : new npm.utils.InternalError(e);
+        }
+    }
+
+    return $p((resolve, reject) => {
+
+        if (notifyReject()) {
+            return;
+        }
+        error = npm.events.query(opt, getContext());
+        if (notifyReject()) {
+            return;
+        }
+        try {
+            const start = Date.now();
+            ctx.db.client.query(query, params, (err, result) => {
+                let data, multiResult, lastResult = result;
+                if (err) {
+                    error = err;
+                } else {
+                    multiResult = Array.isArray(result);
+                    if (multiResult) {
+                        lastResult = result[result.length - 1];
+                        for (let i = 0; i < result.length; i++) {
+                            const r = result[i];
+                            error = npm.events.receive(opt, r.rows, r, getContext());
+                            if (error) {
+                                break;
+                            }
+                        }
+                    } else {
+                        result.duration = Date.now() - start;
+                        error = npm.events.receive(opt, result.rows, result, getContext());
+                    }
+                }
+                if (!error) {
+                    data = lastResult;
+                    if (special) {
+                        if (special.isMultiResult) {
+                            data = multiResult ? result : [result]; // method .multiResult() called
+                        }
+                    } else {
+                        data = data.rows;
+                        const len = data.length;
+                        if (len) {
+                            if (len > 1 && qrm & npm.result.one) {
+                                // one row was expected, but returned multiple;
+                                error = new QueryResultError(qrec.multiple, lastResult, query, params);
+                            } else {
+                                if (!(qrm & (npm.result.one | npm.result.many))) {
+                                    // no data should have been returned;
+                                    error = new QueryResultError(qrec.notEmpty, lastResult, query, params);
+                                } else {
+                                    if (!(qrm & npm.result.many)) {
+                                        data = data[0];
+                                    }
+                                }
+                            }
+                        } else {
+                            // no data returned;
+                            if (qrm & npm.result.none) {
+                                if (qrm & npm.result.one) {
+                                    data = null;
+                                } else {
+                                    data = qrm & npm.result.many ? data : null;
+                                }
+                            } else {
+                                error = new QueryResultError(qrec.noData, lastResult, query, params);
+                            }
+                        }
+                    }
+                }
+
+                if (!notifyReject()) {
+                    resolve(data);
+                }
+            });
+        } catch (e) {
+            // this can only happen as a result of an internal failure within node-postgres,
+            // like during a sudden loss of communications, which is impossible to reproduce
+            // automatically, so removing it from the test coverage:
+            // istanbul ignore next
+            error = e;
+        }
+
+        function getContext() {
+            let client;
+            if (ctx.db) {
+                client = ctx.db.client;
+            } else {
+                error = new Error(npm.text.looseQuery);
+            }
+            return {
+                client, query, params,
+                dc: ctx.dc,
+                ctx: ctx.ctx
+            };
+        }
+
+        notifyReject();
+
+        function notifyReject() {
+            const context = getContext();
+            if (error) {
+                if (error instanceof InternalError) {
+                    error = error.error;
+                }
+                npm.events.error(opt, error, context);
+                reject(error);
+                return true;
+            }
+        }
+    });
+}
+
+module.exports = config => {
+    return function (ctx, query, values, qrm) {
+        return $query.call(this, ctx, query, values, qrm, config);
+    };
+};
+
+
+/***/ }),
+/* 45 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var npm = {
+    u: __webpack_require__(1),
+    os: __webpack_require__(2),
+    utils: __webpack_require__(20)
+};
+
+/**
+ * @interface errors.BatchError
+ * @augments external:Error
+ * @description
+ * This type represents all errors rejected by method {@link batch}, except for {@link external:TypeError TypeError}
+ * when the method receives invalid input parameters.
+ *
+ * @property {string} name
+ * Standard {@link external:Error Error} property - error type name = `BatchError`.
+ *
+ * @property {string} message
+ * Standard {@link external:Error Error} property - the error message.
+ *
+ * It represents the message of the first error encountered in the batch, and is a safe
+ * version of using `first.message`.
+ *
+ * @property {string} stack
+ * Standard {@link external:Error Error} property - the stack trace.
+ *
+ * @property {array} data
+ * Array of objects `{success, result, [origin]}`:
+ * - `success` = true/false, indicates whether the corresponding value in the input array was resolved.
+ * - `result` = resolved data, if `success`=`true`, or else the rejection reason.
+ * - `origin` - set only when failed as a result of an unsuccessful call into the notification callback
+ *    (parameter `cb` of method {@link batch})
+ *
+ * The array has the same size as the input one that was passed into method {@link batch}, providing direct mapping.
+ *
+ * @property {} stat
+ * Resolution Statistics.
+ *
+ * @property {number} stat.total
+ * Total number of elements in the batch.
+ *
+ * @property {number} stat.succeeded
+ * Number of resolved values in the batch.
+ *
+ * @property {number} stat.failed
+ * Number of rejected values in the batch.
+ *
+ * @property {number} stat.duration
+ * Time in milliseconds it took to settle all values.
+ *
+ * @property {} first
+ * The very first error within the batch, with support for nested batch results, it is also the same error
+ * as $[promise.all] would provide.
+ *
+ * @see {@link batch}
+ *
+ */
+function BatchError(result, errors, duration) {
+
+    this.data = result;
+
+    /**
+     * @method errors.BatchError.getErrors
+     * @description
+     * Returns the complete list of errors only.
+     *
+     * It supports nested batch results, presented as a sub-array.
+     *
+     * @returns {array}
+     */
+    this.getErrors = function () {
+        var err = new Array(errors.length);
+        for (var i = 0; i < errors.length; i++) {
+            err[i] = result[errors[i]].result;
+            if (err[i] instanceof BatchError) {
+                err[i] = err[i].getErrors();
+            }
+        }
+        npm.utils.extend(err, '$isErrorList', true);
+        return err;
+    };
+
+    var e = this.getErrors(),
+        first = e[0];
+
+    while (first && first.$isErrorList) {
+        first = first[0];
+    }
+
+    // we do not show it within the inspect, because when the error
+    // happens for a nested result, the output becomes a mess.
+    this.first = first;
+
+    if (first instanceof Error) {
+        this.message = first.message;
+    } else {
+        if (typeof first !== 'string') {
+            first = npm.u.inspect(first);
+        }
+        this.message = first;
+    }
+
+    this.stat = {
+        total: result.length,
+        succeeded: result.length - e.length,
+        failed: e.length,
+        duration: duration
+    };
+
+    Error.captureStackTrace(this, BatchError);
+
+}
+
+npm.u.inherits(BatchError, Error);
+BatchError.prototype.name = 'BatchError';
+
+/**
+ * @method errors.BatchError.toString
+ * @description
+ * Creates a well-formatted multi-line string that represents the error.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * The output is an abbreviated version of the error, because the complete error
+ * is often too much for displaying or even logging, as a batch can be of any size.
+ * Therefore, only errors are rendered from the `data` property, alongside their indexes,
+ * and only up to the first 5, to avoid polluting the screen or the log file.
+ *
+ * @param {number} [level=0]
+ * Nested output level, to provide visual offset.
+ *
+ * @returns {string}
+ */
+BatchError.prototype.toString = function (level) {
+    level = level > 0 ? parseInt(level) : 0;
+    var gap0 = npm.utils.messageGap(level),
+        gap1 = npm.utils.messageGap(level + 1),
+        gap2 = npm.utils.messageGap(level + 2),
+        lines = [
+            'BatchError {',
+            gap1 + 'stat: { total: ' + this.stat.total + ', succeeded: ' + this.stat.succeeded +
+            ', failed: ' + this.stat.failed + ', duration: ' + this.stat.duration + ' }',
+            gap1 + 'errors: ['
+        ];
+
+    // In order to avoid polluting the error log or the console, 
+    // we limit the log output to the top 5 errors:
+    var counter = 0, maxErrors = 5;
+    this.data.forEach(function (d, index) {
+        if (!d.success && counter < maxErrors) {
+            lines.push(gap2 + index + ': ' + npm.utils.formatError(d.result, level + 2));
+            counter++;
+        }
+    });
+    lines.push(gap1 + ']');
+    lines.push(gap0 + '}');
+    return lines.join(npm.os.EOL);
+};
+
+npm.utils.addInspection(BatchError, function () {
+    return this.toString();
+});
+
+module.exports = BatchError;
+
+
+/***/ }),
+/* 46 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var npm = {
+    u: __webpack_require__(1),
+    os: __webpack_require__(2),
+    utils: __webpack_require__(20)
+};
+
+var errorReasons = {
+    0: 'Page with index %d rejected.',
+    1: 'Source %s returned a rejection at index %d.',
+    2: 'Source %s threw an error at index %d.',
+    3: 'Destination %s returned a rejection at index %d.',
+    4: 'Destination %s threw an error at index %d.',
+    5: 'Source %s returned a non-array value at index %d.'
+};
+
+/**
+ * @interface errors.PageError
+ * @augments external:Error
+ * @description
+ * This type represents all errors rejected by method {@link page}, except for {@link external:TypeError TypeError}
+ * when the method receives invalid input parameters.
+ *
+ * @property {string} name
+ * Standard {@link external:Error Error} property - error type name = `PageError`.
+ *
+ * @property {string} message
+ * Standard {@link external:Error Error} property - the error message.
+ *
+ * @property {string} stack
+ * Standard {@link external:Error Error} property - the stack trace.
+ *
+ * @property {} error
+ * The error that was thrown, or the rejection reason.
+ *
+ * @property {number} index
+ * Index of the element in the sequence for which the error/rejection occurred.
+ *
+ * @property {number} duration
+ * Duration (in milliseconds) of processing until the error/rejection occurred.
+ *
+ * @property {string} reason
+ * Textual explanation of why the method failed.
+ *
+ * @property {} source
+ * Resolved `data` parameter that was passed into the `source` function.
+ *
+ * It is only set when the error/rejection occurred inside the `source` function.
+ *
+ * @property {} dest
+ * Resolved `data` parameter that was passed into the `dest` function.
+ *
+ * It is only set when the error/rejection occurred inside the `dest` function.
+ *
+ * @see
+ * {@link page},
+ * {@link batch}
+ *
+ */
+function PageError(e, code, cbName, duration) {
+
+    this.index = e.index;
+    this.duration = duration;
+    this.error = e.error;
+
+    if ('source' in e) {
+        this.source = e.source;
+    }
+
+    if ('dest' in e) {
+        this.dest = e.dest;
+    }
+
+    if (this.error instanceof Error) {
+        this.message = this.error.message;
+    } else {
+        this.message = this.error;
+        if (typeof this.message !== 'string') {
+            this.message = npm.u.inspect(this.message);
+        }
+    }
+
+    if (code) {
+        cbName = cbName ? ('\'' + cbName + '\'') : '<anonymous>';
+        this.reason = npm.u.format(errorReasons[code], cbName, e.index);
+    } else {
+        this.reason = npm.u.format(errorReasons[code], e.index);
+    }
+
+    Error.captureStackTrace(this, PageError);
+
+}
+
+npm.u.inherits(PageError, Error);
+PageError.prototype.name = 'PageError';
+
+/**
+ * @method errors.PageError.toString
+ * @description
+ * Creates a well-formatted multi-line string that represents the error.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * @param {number} [level=0]
+ * Nested output level, to provide visual offset.
+ *
+ * @returns {string}
+ */
+PageError.prototype.toString = function (level) {
+
+    level = level > 0 ? parseInt(level) : 0;
+
+    var gap0 = npm.utils.messageGap(level),
+        gap1 = npm.utils.messageGap(level + 1),
+        lines = [
+            'PageError {',
+            gap1 + 'message: ' + JSON.stringify(this.message),
+            gap1 + 'reason: ' + this.reason,
+            gap1 + 'index: ' + this.index,
+            gap1 + 'duration: ' + this.duration
+        ];
+
+    lines.push(gap1 + 'error: ' + npm.utils.formatError(this.error, level + 1));
+    lines.push(gap0 + '}');
+    return lines.join(npm.os.EOL);
+};
+
+npm.utils.addInspection(PageError, function () {
+    return this.toString();
+});
+
+module.exports = PageError;
+
+
+/***/ }),
+/* 47 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var npm = {
+    u: __webpack_require__(1),
+    os: __webpack_require__(2),
+    utils: __webpack_require__(20)
+};
+
+var errorReasons = {
+    0: 'Source %s returned a rejection at index %d.',
+    1: 'Source %s threw an error at index %d.',
+    2: 'Destination %s returned a rejection at index %d.',
+    3: 'Destination %s threw an error at index %d.'
+};
+
+/**
+ * @interface errors.SequenceError
+ * @augments external:Error
+ * @description
+ * This type represents all errors rejected by method {@link sequence}, except for {@link external:TypeError TypeError}
+ * when the method receives invalid input parameters.
+ *
+ * @property {string} name
+ * Standard {@link external:Error Error} property - error type name = `SequenceError`.
+ *
+ * @property {string} message
+ * Standard {@link external:Error Error} property - the error message.
+ *
+ * @property {string} stack
+ * Standard {@link external:Error Error} property - the stack trace.
+ *
+ * @property {} error
+ * The error that was thrown or the rejection reason.
+ *
+ * @property {number} index
+ * Index of the element in the sequence for which the error/rejection occurred.
+ *
+ * @property {number} duration
+ * Duration (in milliseconds) of processing until the error/rejection occurred.
+ *
+ * @property {string} reason
+ * Textual explanation of why the method failed.
+ *
+ * @property {} source
+ * Resolved `data` parameter that was passed into the `source` function.
+ *
+ * It is only set when the error/rejection occurred inside the `source` function.
+ *
+ * @property {} dest
+ * Resolved `data` parameter that was passed into the `dest` function.
+ *
+ * It is only set when the error/rejection occurred inside the `dest` function.
+ *
+ * @see {@link sequence}
+ *
+ */
+function SequenceError(e, code, cbName, duration) {
+
+    this.index = e.index;
+    this.duration = duration;
+    this.error = e.error;
+
+    if (this.error instanceof Error) {
+        this.message = this.error.message;
+    } else {
+        this.message = this.error;
+        if (typeof this.message !== 'string') {
+            this.message = npm.u.inspect(this.message);
+        }
+    }
+
+    if ('source' in e) {
+        this.source = e.source;
+    } else {
+        this.dest = e.dest;
+    }
+
+    cbName = cbName ? ('\'' + cbName + '\'') : '<anonymous>';
+    this.reason = npm.u.format(errorReasons[code], cbName, e.index);
+
+    Error.captureStackTrace(this, SequenceError);
+}
+
+npm.u.inherits(SequenceError, Error);
+SequenceError.prototype.name = 'SequenceError';
+
+/**
+ * @method errors.SequenceError.toString
+ * @description
+ * Creates a well-formatted multi-line string that represents the error.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * @param {number} [level=0]
+ * Nested output level, to provide visual offset.
+ *
+ * @returns {string}
+ */
+SequenceError.prototype.toString = function (level) {
+
+    level = level > 0 ? parseInt(level) : 0;
+
+    var gap0 = npm.utils.messageGap(level),
+        gap1 = npm.utils.messageGap(level + 1),
+        lines = [
+            'SequenceError {',
+            gap1 + 'message: ' + JSON.stringify(this.message),
+            gap1 + 'reason: ' + this.reason,
+            gap1 + 'index: ' + this.index,
+            gap1 + 'duration: ' + this.duration
+        ];
+
+    lines.push(gap1 + 'error: ' + npm.utils.formatError(this.error, level + 1));
+    lines.push(gap0 + '}');
+    return lines.join(npm.os.EOL);
+};
+
+npm.utils.addInspection(SequenceError, function () {
+    return this.toString();
+});
+
+module.exports = SequenceError;
+
+
+/***/ }),
 /* 48 */
 /***/ (function(module, exports, __webpack_require__) {
 
@@ -180,55 +7356,4203 @@ app.listen(port, () => console.log('Server is running on port:', port));
 
 /***/ }),
 /* 50 */,
-/* 51 */,
-/* 52 */,
-/* 53 */,
-/* 54 */,
+/* 51 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    con: __webpack_require__(7).local,
+    path: __webpack_require__(4),
+    pg: __webpack_require__(25),
+    minify: __webpack_require__(21),
+    adapter: __webpack_require__(35),
+    result: __webpack_require__(22),
+    promise: __webpack_require__(89),
+    formatting: __webpack_require__(3),
+    helpers: __webpack_require__(90),
+    queryFile: __webpack_require__(10),
+    errors: __webpack_require__(19),
+    utils: __webpack_require__(0),
+    pubUtils: __webpack_require__(37),
+    mode: __webpack_require__(40),
+    types: __webpack_require__(41),
+    dbPool: __webpack_require__(42),
+    package: __webpack_require__(38),
+    text: __webpack_require__(6)
+};
+
+/**
+ * @author Vitaly Tomilov
+ * @module pg-promise
+ *
+ * @description
+ * ### Initialization Options
+ *
+ * Below is the complete list of _Initialization Options_ for the library that can be passed in during
+ * the library's initialization:
+ *
+ * ```js
+ * const initOptions = {&#47;* options as documented below *&#47;};
+ *
+ * const pgp = require('pg-promise')(initOptions);
+ * ```
+ *
+ * @param {object} [options]
+ * Library Initialization Options.
+ *
+ * @param {boolean} [options.pgFormatting=false]
+ * Redirects all query formatting to the $[pg] driver.
+ *
+ * By default (`false`), the library uses its own advanced query-formatting engine.
+ * If you set this option to a truthy value, query formatting will be done entirely by the
+ * $[pg] driver, which means you won't be able to use any of the feature-rich query formatting
+ * that this library implements, restricting yourself to the very basic `$1, $2,...` syntax.
+ *
+ * This option is dynamic (can be set before or after initialization).
+ *
+ * @param {boolean} [options.pgNative=false]
+ * Use $[Native Bindings]. Library $[pg-native] must be included and installed independently, or else there will
+ * be an error thrown: {@link external:Error Error} = `Failed to initialize Native Bindings.`
+ *
+ * This is a static option (can only be set prior to initialization).
+ *
+ * @param {object|function} [options.promiseLib=Promise]
+ * Overrides the default (ES6 Promise) promise library for its internal use.
+ *
+ * Example below sets to use $[Bluebird] - the best and recommended promise library. It is the fastest one,
+ * and supports $[Long Stack Traces], essential for debugging promises.
+ *
+ * ```js
+ * const Promise = require('bluebird');
+ * const initOptions = {
+ *     promiseLib: Promise
+ * };
+ * const pgp = require('pg-promise')(initOptions);
+ * ```
+ *
+ * All existing promise libraries are supported. The ones with recognizable signature are used automatically,
+ * while the rest can be configured via the $[Promise Adapter].
+ *
+ * This is a static option (can only be set prior to initialization).
+ *
+ * @param {boolean} [options.noLocking=false]
+ * Prevents protocol locking.
+ *
+ * By default, the library locks much of its protocol to read-only access, as a fool-proof mechanism.
+ * Specifically for the {@link event:extend extend} event this serves as a protection against overriding existing
+ * properties or trying to set them at the wrong time.
+ *
+ * If this provision gets in the way of using a mock-up framework for your tests, you can force
+ * the library to deactivate most of the locks by setting `noLocking` = `true` within the options.
+ *
+ * This option is dynamic (can be set before or after initialization). However, changing it after the library's
+ * initialization will not affect {@link Database} objects that have already been created.
+ *
+ * @param {boolean} [options.capSQL=false]
+ * Capitalizes any SQL generated by the library.
+ *
+ * By default, all internal SQL within the library is generated using the low case.
+ * If, however, you want all SQL to be capitalized instead, set `capSQL` = `true`.
+ *
+ * It is purely a cosmetic feature.
+ *
+ * This option is dynamic (can be set before or after initialization).
+ *
+ * @param {string|Array<string>|null|undefined|function} [options.schema]
+ * **Updated in v8.3.2**
+ *
+ * Forces change of the default database schema(s) for every fresh connection, i.e.
+ * the library will execute `SET search_path TO schema_1, schema_2, ...` in the background
+ * whenever a fresh physical connection is allocated.
+ *
+ * Normally, one changes the default schema(s) by $[changing the database or the role], but sometimes you
+ * may want to switch the default schema(s) without persisting the change, and then use this option.
+ *
+ * It can be a string, an array of strings, or a callback function that takes `dc` (database context)
+ * as the only parameter (and as `this`), and returns schema(s) according to the database context. A callback function
+ * can also return nothing (`undefined` or `null`), if no schema change needed for the specified database context.
+ *
+ * This option is dynamic (can be set before or after initialization).
+ *
+ * @param {boolean} [options.noWarnings=false]
+ * Disables all diagnostic warnings in the library (it is ill-advised).
+ *
+ * This option is dynamic (can be set before or after initialization).
+ *
+ * @param {function} [options.connect]
+ * Global event {@link event:connect connect} handler.
+ *
+ * This option is dynamic (can be set before or after initialization).
+ *
+ * @param {function} [options.disconnect]
+ * Global event {@link event:disconnect disconnect} handler.
+ *
+ * This option is dynamic (can be set before or after initialization).
+ *
+ * @param {function} [options.query]
+ * Global event {@link event:query query} handler.
+ *
+ * This option is dynamic (can be set before or after initialization).
+ *
+ * @param {function} [options.receive]
+ * Global event {@link event:receive receive} handler.
+ *
+ * @param {function} [options.task]
+ * Global event {@link event:task task} handler.
+ *
+ * This option is dynamic (can be set before or after initialization).
+ *
+ * @param {function} [options.transact]
+ * Global event {@link event:transact transact} handler.
+ *
+ * This option is dynamic (can be set before or after initialization).
+ *
+ * @param {function} [options.error]
+ * Global event {@link event:error error} handler.
+ *
+ * This option is dynamic (can be set before or after initialization).
+ *
+ * @param {function} [options.extend]
+ * Global event {@link event:extend extend} handler.
+ *
+ * This option is dynamic (can be set before or after initialization).
+ *
+ * @see
+ * {@link module:pg-promise~end end},
+ * {@link module:pg-promise~as as},
+ * {@link module:pg-promise~errors errors},
+ * {@link module:pg-promise~helpers helpers},
+ * {@link module:pg-promise~minify minify},
+ * {@link module:pg-promise~ParameterizedQuery ParameterizedQuery},
+ * {@link module:pg-promise~PreparedStatement PreparedStatement},
+ * {@link module:pg-promise~pg pg},
+ * {@link module:pg-promise~QueryFile QueryFile},
+ * {@link module:pg-promise~queryResult queryResult},
+ * {@link module:pg-promise~spex spex},
+ * {@link module:pg-promise~txMode txMode},
+ * {@link module:pg-promise~utils utils}
+ *
+ */
+function $main(options) {
+
+    if (npm.utils.isNull(options)) {
+        options = {};
+    } else {
+        if (typeof options !== 'object') {
+            throw new TypeError('Invalid initialization options: ' + JSON.stringify(options));
+        }
+
+        // list of supported initialization options:
+        const validOptions = ['pgFormatting', 'pgNative', 'promiseLib', 'noLocking', 'capSQL', 'noWarnings',
+            'connect', 'disconnect', 'query', 'receive', 'task', 'transact', 'error', 'extend', 'schema'];
+
+        if (!options.noWarnings) {
+            for (const prop in options) {
+                if (validOptions.indexOf(prop) === -1) {
+                    npm.con.warn('WARNING: Invalid property \'%s\' in initialization options.\n%s\n', prop, npm.utils.getLocalStack(3));
+                    break;
+                }
+            }
+        }
+    }
+
+    let pg = npm.pg;
+    const p = npm.promise(options.promiseLib);
+
+    const config = {
+        version: npm.package.version,
+        promiseLib: p.promiseLib,
+        promise: p.promise
+    };
+
+    npm.utils.addReadProp(config, '$npm', {}, true);
+
+    // Locking properties that cannot be changed later:
+    npm.utils.addReadProp(options, 'promiseLib', options.promiseLib);
+    npm.utils.addReadProp(options, 'pgNative', !!options.pgNative);
+
+    config.options = options;
+
+    // istanbul ignore next:
+    // we do not cover code specific to Native Bindings
+    if (options.pgNative) {
+        pg = npm.pg.native;
+        if (npm.utils.isNull(pg)) {
+            throw new Error(npm.text.nativeError);
+        }
+    }
+
+    const Database = __webpack_require__(101)(config);
+
+    const inst = (cn, dc) => {
+        if (npm.utils.isText(cn) || (cn && typeof cn === 'object')) {
+            return new Database(cn, dc, config);
+        }
+        throw new TypeError('Invalid connection details: ' + JSON.stringify(cn));
+    };
+
+    npm.utils.addReadProperties(inst, rootNameSpace);
+
+    /**
+     * @member {external:PG} pg
+     * @readonly
+     * @description
+     * Instance of the $[pg] library that's being used, depending on initialization option `pgNative`:
+     *  - regular `pg` module instance, without option `pgNative`, or equal to `false` (default)
+     *  - `pg` module instance with $[Native Bindings], if option `pgNative` was set.
+     *
+     * Available as `pgp.pg`, after initializing the library.
+     */
+    npm.utils.addReadProp(inst, 'pg', pg);
+
+    /**
+     * @member {function} end
+     * @readonly
+     * @description
+     * Shuts down all connection pools created in the process, so it can terminate without delay.
+     * It is available as `pgp.end`, after initializing the library.
+     *
+     * All {@link Database} objects created previously can no longer be used, and their query methods will be rejecting
+     * with {@link external:Error Error} = `Connection pool of the database object has been destroyed.`
+     *
+     * And if you want to shut down only a specific connection pool, you do so via the {@link Database}
+     * object that owns the pool: `db.$pool.end()` (see {@link Database#$pool Database.$pool}).
+     *
+     * For more details see $[Library de-initialization].
+     */
+    npm.utils.addReadProp(inst, 'end', () => {
+        npm.dbPool.shutDown();
+    });
+
+    /**
+     * @member {helpers} helpers
+     * @readonly
+     * @description
+     * Namespace for {@link helpers all query-formatting helper functions}.
+     *
+     * Available as `pgp.helpers`, after initializing the library.
+     *
+     * @see {@link helpers}.
+     */
+    npm.utils.addReadProp(inst, 'helpers', npm.helpers(config));
+
+    /**
+     * @member {external:spex} spex
+     * @readonly
+     * @description
+     * Initialized instance of the $[spex] module, used by the library within tasks and transactions.
+     *
+     * Available as `pgp.spex`, after initializing the library.
+     *
+     * @see
+     * {@link Task#batch},
+     * {@link Task#page},
+     * {@link Task#sequence}
+     */
+    npm.utils.addReadProp(inst, 'spex', config.$npm.spex);
+
+    config.pgp = inst;
+    npm.utils.lock(config, true, options);
+
+    return inst;
+}
+
+const rootNameSpace = {
+
+    /**
+     * @member {formatting} as
+     * @readonly
+     * @description
+     * Namespace for {@link formatting all query-formatting functions}.
+     *
+     * Available as `pgp.as`, before and after initializing the library.
+     *
+     * @see {@link formatting}.
+     */
+    as: npm.formatting.as,
+
+    /**
+     * @member {external:pg-minify} minify
+     * @readonly
+     * @description
+     * Instance of the $[pg-minify] library used internally to minify SQL scripts.
+     *
+     * Available as `pgp.minify`, before and after initializing the library.
+     */
+    minify: npm.minify,
+
+    /**
+     * @member {queryResult} queryResult
+     * @readonly
+     * @description
+     * Query Result Mask enumerator.
+     *
+     * Available as `pgp.queryResult`, before and after initializing the library.
+     */
+    queryResult: npm.result,
+
+    /**
+     * @member {PromiseAdapter} PromiseAdapter
+     * @readonly
+     * @description
+     * {@link PromiseAdapter} class.
+     *
+     * Available as `pgp.PromiseAdapter`, before and after initializing the library.
+     */
+    PromiseAdapter: npm.adapter,
+
+    /**
+     * @member {ParameterizedQuery} ParameterizedQuery
+     * @readonly
+     * @description
+     * {@link ParameterizedQuery} class.
+     *
+     * Available as `pgp.ParameterizedQuery`, before and after initializing the library.
+     */
+    ParameterizedQuery: npm.types.ParameterizedQuery,
+
+    /**
+     * @member {PreparedStatement} PreparedStatement
+     * @readonly
+     * @description
+     * {@link PreparedStatement} class.
+     *
+     * Available as `pgp.PreparedStatement`, before and after initializing the library.
+     */
+    PreparedStatement: npm.types.PreparedStatement,
+
+    /**
+     * @member {QueryFile} QueryFile
+     * @readonly
+     * @description
+     * {@link QueryFile} class.
+     *
+     * Available as `pgp.QueryFile`, before and after initializing the library.
+     */
+    QueryFile: npm.queryFile,
+
+
+    /**
+     * @member {errors} errors
+     * @readonly
+     * @description
+     * {@link errors} - namespace for all error types.
+     *
+     * Available as `pgp.errors`, before and after initializing the library.
+     */
+    errors: npm.errors,
+
+    /**
+     * @member {utils} utils
+     * @readonly
+     * @description
+     * {@link utils} - namespace for utility functions.
+     *
+     * Available as `pgp.utils`, before and after initializing the library.
+     */
+    utils: npm.pubUtils,
+
+    /**
+     * @member {txMode} txMode
+     * @readonly
+     * @description
+     * {@link txMode Transaction Mode} namespace.
+     *
+     * Available as `pgp.txMode`, before and after initializing the library.
+     */
+    txMode: npm.mode
+};
+
+npm.utils.addReadProperties($main, rootNameSpace);
+
+module.exports = $main;
+
+/**
+ * @external Promise
+ * @see https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/Promise
+ */
+
+/**
+ * @external PG
+ * @see https://node-postgres.com
+ */
+
+/**
+ * @external Client
+ * @see https://node-postgres.com/api/client
+ */
+
+/**
+ * @external pg-minify
+ * @see https://github.com/vitaly-t/pg-minify
+ */
+
+/**
+ * @external spex
+ * @see https://github.com/vitaly-t/spex
+ */
+
+
+/***/ }),
+/* 52 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var util = __webpack_require__(1);
+var colors = __webpack_require__(53);
+
+var $def = {
+
+    // process.stdout:
+    log: console.log,
+    info: console.info,
+
+    // process.stderr:
+    error: console.error,
+    warn: console.warn
+};
+
+function colorize(value, color, isMsg) {
+    value = isMsg && typeof value === 'string' ? value : util.inspect(value);
+    return '\x1b[' + color + 'm' + value + '\x1b[0m';
+}
+
+function format(stream, values, color) {
+    if (stream.isTTY) {
+        if (values.length && typeof values[0] === 'string') {
+            return [colorize(util.format.apply(null, values), color, true)];
+        }
+        return Object.keys(values).map(function (key) {
+            return colorize(values[key], color);
+        });
+    }
+    return values;
+}
+
+/**
+ * @class Writer
+ * @param noLock
+ */
+function Writer(noLock) {
+
+    var self = this;
+
+    /**
+     * @method Writer.log
+     * @description
+     * Formats and sends console.log into stdout.
+     */
+    this.log = function () {
+        $def.log.apply(null, format(process.stdout, arguments, getColor(self.log, colors.log)));
+    };
+
+    /**
+     * @method Writer.error
+     * @description
+     * Formats and sends console.error into stderr.
+     */
+    this.error = function () {
+        $def.error.apply(null, format(process.stderr, arguments, getColor(self.error, colors.error)));
+    };
+
+    /**
+     * @method Writer.warn
+     * @description
+     * Formats and sends console.log into stderr.
+     */
+    this.warn = function () {
+        $def.warn.apply(null, format(process.stderr, arguments, getColor(self.warn, colors.warn)));
+    };
+
+    /**
+     * @method Writer.info
+     * @description
+     * Formats and sends console.log into stdout.
+     */
+    this.info = function () {
+        $def.info.apply(null, format(process.stdout, arguments, getColor(self.info, colors.info)));
+    };
+
+    /**
+     * @method Writer.success
+     * @description
+     * Formats and sends console.log into stdout.
+     *
+     * This is a custom method, i.e. doesn't exist on the standard console.
+     */
+    this.success = function () {
+        $def.log.apply(null, format(process.stdout, arguments, getColor(self.success, colors.success)));
+    };
+
+    /**
+     * @method Writer.ok
+     * @description
+     * Formats and sends console.log into stdout.
+     *
+     * This is a custom method, i.e. doesn't exist on the standard console.
+     */
+    this.ok = function () {
+        $def.log.apply(null, format(process.stdout, arguments, getColor(self.ok, colors.ok)));
+    };
+
+    /**
+     * @method Writer.write
+     * @description
+     * Formats and sends custom-color values either into stdout or stderr.
+     *
+     * @param {} values - output parameters
+     *
+     * @param {number} color - output color: 0 <= color <= 256
+     *
+     * @param {boolean}[isError=false] - sends console.error into stderr;
+     * By default, the method sends console.log into stdout.
+     *
+     */
+    this.write = function (values, color, isError) {
+        var method = $def.log, stream = process.stdout;
+        if (isError) {
+            method = $def.error;
+            stream = process.stderr;
+        }
+        if (color !== +color || color < 0 || color > 256) {
+            method.apply(null, values);
+        } else {
+            method.apply(null, format(stream, values, color));
+        }
+    };
+
+    addProperties('log');
+    addProperties('error');
+    addProperties('warn');
+    addProperties('info');
+    addProperties('success');
+    addProperties('ok');
+
+    /**
+     * @method Writer.setBright
+     * @description
+     * Set brightness for all methods at once.
+     *
+     * @param {boolean} [bright=true]
+     * Indicates whether the color is to be set to be bright.
+     *
+     */
+    this.setBright = function (bright) {
+        // set to bright colors, if the flag is truthy or undefined;
+        // set to dim colors, if flag is falsy
+        bright = bright === undefined ? true : !!bright;
+
+        self.log.bright = bright;
+        self.error.bright = bright;
+        self.warn.bright = bright;
+        self.info.bright = bright;
+        self.success.bright = bright;
+        self.ok.bright = bright;
+    };
+
+    if (!noLock) {
+        Object.freeze(this);
+    }
+
+    function addProperties(name) {
+
+        // brightness for the predefined color:
+        Object.defineProperty(self[name], 'bright', {
+            value: false,
+            writable: true
+        });
+
+        // override for the predefined color:
+        Object.defineProperty(self[name], 'color', {
+            writable: true
+        });
+
+        Object.seal(self[name]);
+    }
+}
+
+function getColor(prop, color) {
+    var c = prop.color;
+    return (c === +c && c >= 0 && c <= 256) ? c : (prop.bright ? color.bright : color.normal);
+}
+
+module.exports = Writer;
+
+
+/***/ }),
+/* 53 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+module.exports = {
+    log: {
+        normal: 39, // white
+        bright: 97 // light white
+    },
+    error: {
+        normal: 31, // red
+        bright: 91 // light red
+    },
+    warn: {
+        normal: 33, // yellow
+        bright: 93 // light yellow
+    },
+    info: {
+        normal: 36, // cyan
+        bright: 96 // light cyan
+    },
+    success: {
+        normal: 32, // green
+        bright: 92 // light green
+    },
+    ok: {
+        normal: 32, // green
+        bright: 92 // light green
+    }
+};
+
+
+/***/ }),
+/* 54 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+/**
+ * Copyright (c) 2010-2017 Brian Carlson (brian.m.carlson@gmail.com)
+ * All rights reserved.
+ *
+ * This source code is licensed under the MIT license found in the
+ * README.md file in the root directory of this source tree.
+ */
+
+var EventEmitter = __webpack_require__(5).EventEmitter
+var util = __webpack_require__(1)
+var utils = __webpack_require__(13)
+var pgPass = __webpack_require__(62)
+var TypeOverrides = __webpack_require__(28)
+
+var ConnectionParameters = __webpack_require__(29)
+var Query = __webpack_require__(70)
+var defaults = __webpack_require__(14)
+var Connection = __webpack_require__(30)
+
+var Client = function (config) {
+  EventEmitter.call(this)
+
+  this.connectionParameters = new ConnectionParameters(config)
+  this.user = this.connectionParameters.user
+  this.database = this.connectionParameters.database
+  this.port = this.connectionParameters.port
+  this.host = this.connectionParameters.host
+  this.password = this.connectionParameters.password
+  this.replication = this.connectionParameters.replication
+
+  var c = config || {}
+
+  this._types = new TypeOverrides(c.types)
+  this._ending = false
+  this._connecting = false
+  this._connected = false
+  this._connectionError = false
+
+  this.connection = c.connection || new Connection({
+    stream: c.stream,
+    ssl: this.connectionParameters.ssl,
+    keepAlive: c.keepAlive || false,
+    encoding: this.connectionParameters.client_encoding || 'utf8'
+  })
+  this.queryQueue = []
+  this.binary = c.binary || defaults.binary
+  this.processID = null
+  this.secretKey = null
+  this.ssl = this.connectionParameters.ssl || false
+}
+
+util.inherits(Client, EventEmitter)
+
+Client.prototype.connect = function (callback) {
+  var self = this
+  var con = this.connection
+  if (this._connecting || this._connected) {
+    const err = new Error('Client has already been connected. You cannot reuse a client.')
+    if (callback) {
+      callback(err)
+      return undefined
+    }
+    return Promise.reject(err)
+  }
+  this._connecting = true
+
+  if (this.host && this.host.indexOf('/') === 0) {
+    con.connect(this.host + '/.s.PGSQL.' + this.port)
+  } else {
+    con.connect(this.port, this.host)
+  }
+
+  // once connection is established send startup message
+  con.on('connect', function () {
+    if (self.ssl) {
+      con.requestSsl()
+    } else {
+      con.startup(self.getStartupConf())
+    }
+  })
+
+  con.on('sslconnect', function () {
+    con.startup(self.getStartupConf())
+  })
+
+  function checkPgPass (cb) {
+    return function (msg) {
+      if (self.password !== null) {
+        cb(msg)
+      } else {
+        pgPass(self.connectionParameters, function (pass) {
+          if (undefined !== pass) {
+            self.connectionParameters.password = self.password = pass
+          }
+          cb(msg)
+        })
+      }
+    }
+  }
+
+  // password request handling
+  con.on('authenticationCleartextPassword', checkPgPass(function () {
+    con.password(self.password)
+  }))
+
+  // password request handling
+  con.on('authenticationMD5Password', checkPgPass(function (msg) {
+    con.password(utils.postgresMd5PasswordHash(self.user, self.password, msg.salt))
+  }))
+
+  con.once('backendKeyData', function (msg) {
+    self.processID = msg.processID
+    self.secretKey = msg.secretKey
+  })
+
+  const connectingErrorHandler = (err) => {
+    if (this._connectionError) {
+      return
+    }
+    this._connectionError = true
+    if (callback) {
+      return callback(err)
+    }
+    this.emit('error', err)
+  }
+
+  const connectedErrorHandler = (err) => {
+    if (this.activeQuery) {
+      var activeQuery = self.activeQuery
+      this.activeQuery = null
+      return activeQuery.handleError(err, con)
+    }
+    this.emit('error', err)
+  }
+
+  con.on('error', connectingErrorHandler)
+
+  // hook up query handling events to connection
+  // after the connection initially becomes ready for queries
+  con.once('readyForQuery', function () {
+    self._connecting = false
+    self._connected = true
+    self._attachListeners(con)
+    con.removeListener('error', connectingErrorHandler)
+    con.on('error', connectedErrorHandler)
+
+    // process possible callback argument to Client#connect
+    if (callback) {
+      callback(null, self)
+      // remove callback for proper error handling
+      // after the connect event
+      callback = null
+    }
+    self.emit('connect')
+  })
+
+  con.on('readyForQuery', function () {
+    var activeQuery = self.activeQuery
+    self.activeQuery = null
+    self.readyForQuery = true
+    if (activeQuery) {
+      activeQuery.handleReadyForQuery(con)
+    }
+    self._pulseQueryQueue()
+  })
+
+  con.once('end', () => {
+    if (this.activeQuery) {
+      var disconnectError = new Error('Connection terminated')
+      this.activeQuery.handleError(disconnectError, con)
+      this.activeQuery = null
+    }
+    if (!this._ending) {
+      // if the connection is ended without us calling .end()
+      // on this client then we have an unexpected disconnection
+      // treat this as an error unless we've already emitted an error
+      // during connection.
+      const error = new Error('Connection terminated unexpectedly')
+      if (this._connecting && !this._connectionError) {
+        if (callback) {
+          callback(error)
+        } else {
+          this.emit('error', error)
+        }
+      } else if (!this._connectionError) {
+        this.emit('error', error)
+      }
+    }
+    this.emit('end')
+  })
+
+  con.on('notice', function (msg) {
+    self.emit('notice', msg)
+  })
+
+  if (!callback) {
+    return new global.Promise((resolve, reject) => {
+      this.once('error', reject)
+      this.once('connect', () => {
+        this.removeListener('error', reject)
+        resolve()
+      })
+    })
+  }
+}
+
+Client.prototype._attachListeners = function (con) {
+  const self = this
+  // delegate rowDescription to active query
+  con.on('rowDescription', function (msg) {
+    self.activeQuery.handleRowDescription(msg)
+  })
+
+  // delegate dataRow to active query
+  con.on('dataRow', function (msg) {
+    self.activeQuery.handleDataRow(msg)
+  })
+
+  // delegate portalSuspended to active query
+  con.on('portalSuspended', function (msg) {
+    self.activeQuery.handlePortalSuspended(con)
+  })
+
+  // deletagate emptyQuery to active query
+  con.on('emptyQuery', function (msg) {
+    self.activeQuery.handleEmptyQuery(con)
+  })
+
+  // delegate commandComplete to active query
+  con.on('commandComplete', function (msg) {
+    self.activeQuery.handleCommandComplete(msg, con)
+  })
+
+  // if a prepared statement has a name and properly parses
+  // we track that its already been executed so we don't parse
+  // it again on the same client
+  con.on('parseComplete', function (msg) {
+    if (self.activeQuery.name) {
+      con.parsedStatements[self.activeQuery.name] = true
+    }
+  })
+
+  con.on('copyInResponse', function (msg) {
+    self.activeQuery.handleCopyInResponse(self.connection)
+  })
+
+  con.on('copyData', function (msg) {
+    self.activeQuery.handleCopyData(msg, self.connection)
+  })
+
+  con.on('notification', function (msg) {
+    self.emit('notification', msg)
+  })
+}
+
+Client.prototype.getStartupConf = function () {
+  var params = this.connectionParameters
+
+  var data = {
+    user: params.user,
+    database: params.database
+  }
+
+  var appName = params.application_name || params.fallback_application_name
+  if (appName) {
+    data.application_name = appName
+  }
+  if (params.replication) {
+    data.replication = '' + params.replication
+  }
+  if (params.statement_timeout) {
+    data.statement_timeout = String(parseInt(params.statement_timeout, 10))
+  }
+
+  return data
+}
+
+Client.prototype.cancel = function (client, query) {
+  if (client.activeQuery === query) {
+    var con = this.connection
+
+    if (this.host && this.host.indexOf('/') === 0) {
+      con.connect(this.host + '/.s.PGSQL.' + this.port)
+    } else {
+      con.connect(this.port, this.host)
+    }
+
+    // once connection is established send cancel message
+    con.on('connect', function () {
+      con.cancel(client.processID, client.secretKey)
+    })
+  } else if (client.queryQueue.indexOf(query) !== -1) {
+    client.queryQueue.splice(client.queryQueue.indexOf(query), 1)
+  }
+}
+
+Client.prototype.setTypeParser = function (oid, format, parseFn) {
+  return this._types.setTypeParser(oid, format, parseFn)
+}
+
+Client.prototype.getTypeParser = function (oid, format) {
+  return this._types.getTypeParser(oid, format)
+}
+
+// Ported from PostgreSQL 9.2.4 source code in src/interfaces/libpq/fe-exec.c
+Client.prototype.escapeIdentifier = function (str) {
+  var escaped = '"'
+
+  for (var i = 0; i < str.length; i++) {
+    var c = str[i]
+    if (c === '"') {
+      escaped += c + c
+    } else {
+      escaped += c
+    }
+  }
+
+  escaped += '"'
+
+  return escaped
+}
+
+// Ported from PostgreSQL 9.2.4 source code in src/interfaces/libpq/fe-exec.c
+Client.prototype.escapeLiteral = function (str) {
+  var hasBackslash = false
+  var escaped = '\''
+
+  for (var i = 0; i < str.length; i++) {
+    var c = str[i]
+    if (c === '\'') {
+      escaped += c + c
+    } else if (c === '\\') {
+      escaped += c + c
+      hasBackslash = true
+    } else {
+      escaped += c
+    }
+  }
+
+  escaped += '\''
+
+  if (hasBackslash === true) {
+    escaped = ' E' + escaped
+  }
+
+  return escaped
+}
+
+Client.prototype._pulseQueryQueue = function () {
+  if (this.readyForQuery === true) {
+    this.activeQuery = this.queryQueue.shift()
+    if (this.activeQuery) {
+      this.readyForQuery = false
+      this.hasExecuted = true
+      this.activeQuery.submit(this.connection)
+    } else if (this.hasExecuted) {
+      this.activeQuery = null
+      this.emit('drain')
+    }
+  }
+}
+
+Client.prototype.query = function (config, values, callback) {
+  // can take in strings, config object or query object
+  var query
+  var result
+  if (typeof config.submit === 'function') {
+    result = query = config
+    if (typeof values === 'function') {
+      query.callback = query.callback || values
+    }
+  } else {
+    query = new Query(config, values, callback)
+    if (!query.callback) {
+      let resolveOut, rejectOut
+      result = new Promise((resolve, reject) => {
+        resolveOut = resolve
+        rejectOut = reject
+      })
+      query.callback = (err, res) => err ? rejectOut(err) : resolveOut(res)
+    }
+  }
+
+  if (this.binary && !query.binary) {
+    query.binary = true
+  }
+  if (query._result) {
+    query._result._getTypeParser = this._types.getTypeParser.bind(this._types)
+  }
+
+  this.queryQueue.push(query)
+  this._pulseQueryQueue()
+  return result
+}
+
+Client.prototype.end = function (cb) {
+  this._ending = true
+  if (this.activeQuery) {
+    // if we have an active query we need to force a disconnect
+    // on the socket - otherwise a hung query could block end forever
+    this.connection.stream.destroy(new Error('Connection terminated by user'))
+    return cb ? cb() : Promise.resolve()
+  }
+  if (cb) {
+    this.connection.end()
+    this.connection.once('end', cb)
+  } else {
+    return new global.Promise((resolve, reject) => {
+      this.connection.end()
+      this.connection.once('end', resolve)
+    })
+  }
+}
+
+// expose a Query constructor
+Client.Query = Query
+
+module.exports = Client
+
+
+/***/ }),
 /* 55 */
 /***/ (function(module, exports) {
 
 module.exports = require("crypto");
 
 /***/ }),
-/* 56 */,
-/* 57 */,
-/* 58 */,
-/* 59 */,
-/* 60 */,
-/* 61 */,
-/* 62 */,
-/* 63 */,
-/* 64 */,
-/* 65 */,
+/* 56 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var array = __webpack_require__(26)
+var arrayParser = __webpack_require__(27);
+var parseDate = __webpack_require__(57);
+var parseInterval = __webpack_require__(58);
+var parseByteA = __webpack_require__(60);
+
+function allowNull (fn) {
+  return function nullAllowed (value) {
+    if (value === null) return value
+    return fn(value)
+  }
+}
+
+function parseBool (value) {
+  if (value === null) return value
+  return value === 'TRUE' ||
+    value === 't' ||
+    value === 'true' ||
+    value === 'y' ||
+    value === 'yes' ||
+    value === 'on' ||
+    value === '1';
+}
+
+function parseBoolArray (value) {
+  if (!value) return null
+  return array.parse(value, parseBool)
+}
+
+function parseBaseTenInt (string) {
+  return parseInt(string, 10)
+}
+
+function parseIntegerArray (value) {
+  if (!value) return null
+  return array.parse(value, allowNull(parseBaseTenInt))
+}
+
+function parseBigIntegerArray (value) {
+  if (!value) return null
+  return array.parse(value, allowNull(function (entry) {
+    return parseBigInteger(entry).trim()
+  }))
+}
+
+var parsePointArray = function(value) {
+  if(!value) { return null; }
+  var p = arrayParser.create(value, function(entry) {
+    if(entry !== null) {
+      entry = parsePoint(entry);
+    }
+    return entry;
+  });
+
+  return p.parse();
+};
+
+var parseFloatArray = function(value) {
+  if(!value) { return null; }
+  var p = arrayParser.create(value, function(entry) {
+    if(entry !== null) {
+      entry = parseFloat(entry);
+    }
+    return entry;
+  });
+
+  return p.parse();
+};
+
+var parseStringArray = function(value) {
+  if(!value) { return null; }
+
+  var p = arrayParser.create(value);
+  return p.parse();
+};
+
+var parseDateArray = function(value) {
+  if (!value) { return null; }
+
+  var p = arrayParser.create(value, function(entry) {
+    if (entry !== null) {
+      entry = parseDate(entry);
+    }
+    return entry;
+  });
+
+  return p.parse();
+};
+
+var parseByteAArray = function(value) {
+  if (!value) { return null; }
+
+  return array.parse(value, allowNull(parseByteA));
+};
+
+var parseInteger = function(value) {
+  return parseInt(value, 10);
+};
+
+var parseBigInteger = function(value) {
+  var valStr = String(value);
+  if (/^\d+$/.test(valStr)) { return valStr; }
+  return value;
+};
+
+var parseJsonArray = function(value) {
+  var arr = parseStringArray(value);
+
+  if (!arr) {
+    return arr;
+  }
+
+  return arr.map(function(el) { return JSON.parse(el); });
+};
+
+var parsePoint = function(value) {
+  if (value[0] !== '(') { return null; }
+
+  value = value.substring( 1, value.length - 1 ).split(',');
+
+  return {
+    x: parseFloat(value[0])
+  , y: parseFloat(value[1])
+  };
+};
+
+var parseCircle = function(value) {
+  if (value[0] !== '<' && value[1] !== '(') { return null; }
+
+  var point = '(';
+  var radius = '';
+  var pointParsed = false;
+  for (var i = 2; i < value.length - 1; i++){
+    if (!pointParsed) {
+      point += value[i];
+    }
+
+    if (value[i] === ')') {
+      pointParsed = true;
+      continue;
+    } else if (!pointParsed) {
+      continue;
+    }
+
+    if (value[i] === ','){
+      continue;
+    }
+
+    radius += value[i];
+  }
+  var result = parsePoint(point);
+  result.radius = parseFloat(radius);
+
+  return result;
+};
+
+var init = function(register) {
+  register(20, parseBigInteger); // int8
+  register(21, parseInteger); // int2
+  register(23, parseInteger); // int4
+  register(26, parseInteger); // oid
+  register(700, parseFloat); // float4/real
+  register(701, parseFloat); // float8/double
+  register(16, parseBool);
+  register(1082, parseDate); // date
+  register(1114, parseDate); // timestamp without timezone
+  register(1184, parseDate); // timestamp
+  register(600, parsePoint); // point
+  register(651, parseStringArray); // cidr[]
+  register(718, parseCircle); // circle
+  register(1000, parseBoolArray);
+  register(1001, parseByteAArray);
+  register(1005, parseIntegerArray); // _int2
+  register(1007, parseIntegerArray); // _int4
+  register(1028, parseIntegerArray); // oid[]
+  register(1016, parseBigIntegerArray); // _int8
+  register(1017, parsePointArray); // point[]
+  register(1021, parseFloatArray); // _float4
+  register(1022, parseFloatArray); // _float8
+  register(1231, parseFloatArray); // _numeric
+  register(1014, parseStringArray); //char
+  register(1015, parseStringArray); //varchar
+  register(1008, parseStringArray);
+  register(1009, parseStringArray);
+  register(1040, parseStringArray); // macaddr[]
+  register(1041, parseStringArray); // inet[]
+  register(1115, parseDateArray); // timestamp without time zone[]
+  register(1182, parseDateArray); // _date
+  register(1185, parseDateArray); // timestamp with time zone[]
+  register(1186, parseInterval);
+  register(17, parseByteA);
+  register(114, JSON.parse.bind(JSON)); // json
+  register(3802, JSON.parse.bind(JSON)); // jsonb
+  register(199, parseJsonArray); // json[]
+  register(3807, parseJsonArray); // jsonb[]
+  register(3907, parseStringArray); // numrange[]
+  register(2951, parseStringArray); // uuid[]
+  register(791, parseStringArray); // money[]
+  register(1183, parseStringArray); // time[]
+  register(1270, parseStringArray); // timetz[]
+};
+
+module.exports = {
+  init: init
+};
+
+
+/***/ }),
+/* 57 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var DATE_TIME = /(\d{1,})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})(\.\d{1,})?/
+var DATE = /^(\d{1,})-(\d{2})-(\d{2})$/
+var TIME_ZONE = /([Z+-])(\d{2})?:?(\d{2})?:?(\d{2})?/
+var BC = /BC$/
+var INFINITY = /^-?infinity$/
+
+module.exports = function parseDate (isoDate) {
+  if (INFINITY.test(isoDate)) {
+    // Capitalize to Infinity before passing to Number
+    return Number(isoDate.replace('i', 'I'))
+  }
+  var matches = DATE_TIME.exec(isoDate)
+
+  if (!matches) {
+    // Force YYYY-MM-DD dates to be parsed as local time
+    return DATE.test(isoDate) ?
+      getDate(isoDate) :
+      null
+  }
+
+  var isBC = BC.test(isoDate)
+  var year = parseInt(matches[1], 10)
+  var isFirstCentury = year > 0 && year < 100
+  year = (isBC ? '-' : '') + year
+
+  var month = parseInt(matches[2], 10) - 1
+  var day = matches[3]
+  var hour = parseInt(matches[4], 10)
+  var minute = parseInt(matches[5], 10)
+  var second = parseInt(matches[6], 10)
+
+  var ms = matches[7]
+  ms = ms ? 1000 * parseFloat(ms) : 0
+
+  var date
+  var offset = timeZoneOffset(isoDate)
+  if (offset != null) {
+    var utc = Date.UTC(year, month, day, hour, minute, second, ms)
+    date = new Date(utc - offset)
+  } else {
+    date = new Date(year, month, day, hour, minute, second, ms)
+  }
+
+  if (isFirstCentury) {
+    date.setUTCFullYear(year)
+  }
+
+  return date
+}
+
+function getDate (isoDate) {
+  var matches = DATE.exec(isoDate)
+  var year = parseInt(matches[1], 10)
+  var month = parseInt(matches[2], 10) - 1
+  var day = matches[3]
+  // YYYY-MM-DD will be parsed as local time
+  var date = new Date(year, month, day)
+  date.setFullYear(year)
+  return date
+}
+
+// match timezones:
+// Z (UTC)
+// -05
+// +06:30
+function timeZoneOffset (isoDate) {
+  var zone = TIME_ZONE.exec(isoDate.split(' ')[1])
+  if (!zone) return
+  var type = zone[1]
+
+  if (type === 'Z') {
+    return 0
+  }
+  var sign = type === '-' ? -1 : 1
+  var offset = parseInt(zone[2], 10) * 3600 +
+    parseInt(zone[3] || 0, 10) * 60 +
+    parseInt(zone[4] || 0, 10)
+
+  return offset * sign * 1000
+}
+
+
+/***/ }),
+/* 58 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var extend = __webpack_require__(59)
+
+module.exports = PostgresInterval
+
+function PostgresInterval (raw) {
+  if (!(this instanceof PostgresInterval)) {
+    return new PostgresInterval(raw)
+  }
+  extend(this, parse(raw))
+}
+var properties = ['seconds', 'minutes', 'hours', 'days', 'months', 'years']
+PostgresInterval.prototype.toPostgres = function () {
+  var filtered = properties.filter(this.hasOwnProperty, this)
+
+  // In addition to `properties`, we need to account for fractions of seconds.
+  if (this.milliseconds && filtered.indexOf('seconds') < 0) {
+    filtered.push('seconds')
+  }
+
+  if (filtered.length === 0) return '0'
+  return filtered
+    .map(function (property) {
+      var value = this[property] || 0
+
+      // Account for fractional part of seconds,
+      // remove trailing zeroes.
+      if (property === 'seconds' && this.milliseconds) {
+        value = (value + this.milliseconds / 1000).toFixed(6).replace(/0+$/, '')
+      }
+
+      return value + ' ' + property
+    }, this)
+    .join(' ')
+}
+
+var propertiesISOEquivalent = {
+  years: 'Y',
+  months: 'M',
+  days: 'D',
+  hours: 'H',
+  minutes: 'M',
+  seconds: 'S'
+}
+var dateProperties = ['years', 'months', 'days']
+var timeProperties = ['hours', 'minutes', 'seconds']
+// according to ISO 8601
+PostgresInterval.prototype.toISO = function () {
+  var datePart = dateProperties
+    .map(buildProperty, this)
+    .join('')
+
+  var timePart = timeProperties
+    .map(buildProperty, this)
+    .join('')
+
+  return 'P' + datePart + 'T' + timePart
+
+  function buildProperty (property) {
+    var value = this[property] || 0
+
+    // Account for fractional part of seconds,
+    // remove trailing zeroes.
+    if (property === 'seconds' && this.milliseconds) {
+      value = (value + this.milliseconds / 1000).toFixed(6).replace(/0+$/, '')
+    }
+
+    return value + propertiesISOEquivalent[property]
+  }
+
+}
+
+var NUMBER = '([+-]?\\d+)'
+var YEAR = NUMBER + '\\s+years?'
+var MONTH = NUMBER + '\\s+mons?'
+var DAY = NUMBER + '\\s+days?'
+var TIME = '([+-])?([\\d]*):(\\d\\d):(\\d\\d)\.?(\\d{1,6})?'
+var INTERVAL = new RegExp([YEAR, MONTH, DAY, TIME].map(function (regexString) {
+  return '(' + regexString + ')?'
+})
+.join('\\s*'))
+
+// Positions of values in regex match
+var positions = {
+  years: 2,
+  months: 4,
+  days: 6,
+  hours: 9,
+  minutes: 10,
+  seconds: 11,
+  milliseconds: 12
+}
+// We can use negative time
+var negatives = ['hours', 'minutes', 'seconds', 'milliseconds']
+
+function parseMilliseconds (fraction) {
+  // add omitted zeroes
+  var microseconds = fraction + '000000'.slice(fraction.length)
+  return parseInt(microseconds, 10) / 1000
+}
+
+function parse (interval) {
+  if (!interval) return {}
+  var matches = INTERVAL.exec(interval)
+  var isNegative = matches[8] === '-'
+  return Object.keys(positions)
+    .reduce(function (parsed, property) {
+      var position = positions[property]
+      var value = matches[position]
+      // no empty string
+      if (!value) return parsed
+      // milliseconds are actually microseconds (up to 6 digits)
+      // with omitted trailing zeroes.
+      value = property === 'milliseconds'
+        ? parseMilliseconds(value)
+        : parseInt(value, 10)
+      // no zeros
+      if (!value) return parsed
+      if (isNegative && ~negatives.indexOf(property)) {
+        value *= -1
+      }
+      parsed[property] = value
+      return parsed
+    }, {})
+}
+
+
+/***/ }),
+/* 59 */
+/***/ (function(module, exports) {
+
+module.exports = extend
+
+var hasOwnProperty = Object.prototype.hasOwnProperty;
+
+function extend(target) {
+    for (var i = 1; i < arguments.length; i++) {
+        var source = arguments[i]
+
+        for (var key in source) {
+            if (hasOwnProperty.call(source, key)) {
+                target[key] = source[key]
+            }
+        }
+    }
+
+    return target
+}
+
+
+/***/ }),
+/* 60 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+module.exports = function parseBytea (input) {
+  if (/^\\x/.test(input)) {
+    // new 'hex' style response (pg >9.0)
+    return new Buffer(input.substr(2), 'hex')
+  }
+  var output = ''
+  var i = 0
+  while (i < input.length) {
+    if (input[i] !== '\\') {
+      output += input[i]
+      ++i
+    } else {
+      if (/[0-7]{3}/.test(input.substr(i + 1, 3))) {
+        output += String.fromCharCode(parseInt(input.substr(i + 1, 3), 8))
+        i += 4
+      } else {
+        var backslashes = 1
+        while (i + backslashes < input.length && input[i + backslashes] === '\\') {
+          backslashes++
+        }
+        for (var k = 0; k < Math.floor(backslashes / 2); ++k) {
+          output += '\\'
+        }
+        i += Math.floor(backslashes / 2) * 2
+      }
+    }
+  }
+  return new Buffer(output, 'binary')
+}
+
+
+/***/ }),
+/* 61 */
+/***/ (function(module, exports) {
+
+var parseBits = function(data, bits, offset, invert, callback) {
+  offset = offset || 0;
+  invert = invert || false;
+  callback = callback || function(lastValue, newValue, bits) { return (lastValue * Math.pow(2, bits)) + newValue; };
+  var offsetBytes = offset >> 3;
+
+  var inv = function(value) {
+    if (invert) {
+      return ~value & 0xff;
+    }
+
+    return value;
+  };
+
+  // read first (maybe partial) byte
+  var mask = 0xff;
+  var firstBits = 8 - (offset % 8);
+  if (bits < firstBits) {
+    mask = (0xff << (8 - bits)) & 0xff;
+    firstBits = bits;
+  }
+
+  if (offset) {
+    mask = mask >> (offset % 8);
+  }
+
+  var result = 0;
+  if ((offset % 8) + bits >= 8) {
+    result = callback(0, inv(data[offsetBytes]) & mask, firstBits);
+  }
+
+  // read bytes
+  var bytes = (bits + offset) >> 3;
+  for (var i = offsetBytes + 1; i < bytes; i++) {
+    result = callback(result, inv(data[i]), 8);
+  }
+
+  // bits to read, that are not a complete byte
+  var lastBits = (bits + offset) % 8;
+  if (lastBits > 0) {
+    result = callback(result, inv(data[bytes]) >> (8 - lastBits), lastBits);
+  }
+
+  return result;
+};
+
+var parseFloatFromBits = function(data, precisionBits, exponentBits) {
+  var bias = Math.pow(2, exponentBits - 1) - 1;
+  var sign = parseBits(data, 1);
+  var exponent = parseBits(data, exponentBits, 1);
+
+  if (exponent === 0) {
+    return 0;
+  }
+
+  // parse mantissa
+  var precisionBitsCounter = 1;
+  var parsePrecisionBits = function(lastValue, newValue, bits) {
+    if (lastValue === 0) {
+      lastValue = 1;
+    }
+
+    for (var i = 1; i <= bits; i++) {
+      precisionBitsCounter /= 2;
+      if ((newValue & (0x1 << (bits - i))) > 0) {
+        lastValue += precisionBitsCounter;
+      }
+    }
+
+    return lastValue;
+  };
+
+  var mantissa = parseBits(data, precisionBits, exponentBits + 1, false, parsePrecisionBits);
+
+  // special cases
+  if (exponent == (Math.pow(2, exponentBits + 1) - 1)) {
+    if (mantissa === 0) {
+      return (sign === 0) ? Infinity : -Infinity;
+    }
+
+    return NaN;
+  }
+
+  // normale number
+  return ((sign === 0) ? 1 : -1) * Math.pow(2, exponent - bias) * mantissa;
+};
+
+var parseInt16 = function(value) {
+  if (parseBits(value, 1) == 1) {
+    return -1 * (parseBits(value, 15, 1, true) + 1);
+  }
+
+  return parseBits(value, 15, 1);
+};
+
+var parseInt32 = function(value) {
+  if (parseBits(value, 1) == 1) {
+    return -1 * (parseBits(value, 31, 1, true) + 1);
+  }
+
+  return parseBits(value, 31, 1);
+};
+
+var parseFloat32 = function(value) {
+  return parseFloatFromBits(value, 23, 8);
+};
+
+var parseFloat64 = function(value) {
+  return parseFloatFromBits(value, 52, 11);
+};
+
+var parseNumeric = function(value) {
+  var sign = parseBits(value, 16, 32);
+  if (sign == 0xc000) {
+    return NaN;
+  }
+
+  var weight = Math.pow(10000, parseBits(value, 16, 16));
+  var result = 0;
+
+  var digits = [];
+  var ndigits = parseBits(value, 16);
+  for (var i = 0; i < ndigits; i++) {
+    result += parseBits(value, 16, 64 + (16 * i)) * weight;
+    weight /= 10000;
+  }
+
+  var scale = Math.pow(10, parseBits(value, 16, 48));
+  return ((sign === 0) ? 1 : -1) * Math.round(result * scale) / scale;
+};
+
+var parseDate = function(isUTC, value) {
+  var sign = parseBits(value, 1);
+  var rawValue = parseBits(value, 63, 1);
+
+  // discard usecs and shift from 2000 to 1970
+  var result = new Date((((sign === 0) ? 1 : -1) * rawValue / 1000) + 946684800000);
+
+  if (!isUTC) {
+    result.setTime(result.getTime() + result.getTimezoneOffset() * 60000);
+  }
+
+  // add microseconds to the date
+  result.usec = rawValue % 1000;
+  result.getMicroSeconds = function() {
+    return this.usec;
+  };
+  result.setMicroSeconds = function(value) {
+    this.usec = value;
+  };
+  result.getUTCMicroSeconds = function() {
+    return this.usec;
+  };
+
+  return result;
+};
+
+var parseArray = function(value) {
+  var dim = parseBits(value, 32);
+
+  var flags = parseBits(value, 32, 32);
+  var elementType = parseBits(value, 32, 64);
+
+  var offset = 96;
+  var dims = [];
+  for (var i = 0; i < dim; i++) {
+    // parse dimension
+    dims[i] = parseBits(value, 32, offset);
+    offset += 32;
+
+    // ignore lower bounds
+    offset += 32;
+  }
+
+  var parseElement = function(elementType) {
+    // parse content length
+    var length = parseBits(value, 32, offset);
+    offset += 32;
+
+    // parse null values
+    if (length == 0xffffffff) {
+      return null;
+    }
+
+    var result;
+    if ((elementType == 0x17) || (elementType == 0x14)) {
+      // int/bigint
+      result = parseBits(value, length * 8, offset);
+      offset += length * 8;
+      return result;
+    }
+    else if (elementType == 0x19) {
+      // string
+      result = value.toString(this.encoding, offset >> 3, (offset += (length << 3)) >> 3);
+      return result;
+    }
+    else {
+      console.log("ERROR: ElementType not implemented: " + elementType);
+    }
+  };
+
+  var parse = function(dimension, elementType) {
+    var array = [];
+    var i;
+
+    if (dimension.length > 1) {
+      var count = dimension.shift();
+      for (i = 0; i < count; i++) {
+        array[i] = parse(dimension, elementType);
+      }
+      dimension.unshift(count);
+    }
+    else {
+      for (i = 0; i < dimension[0]; i++) {
+        array[i] = parseElement(elementType);
+      }
+    }
+
+    return array;
+  };
+
+  return parse(dims, elementType);
+};
+
+var parseText = function(value) {
+  return value.toString('utf8');
+};
+
+var parseBool = function(value) {
+  if(value === null) return null;
+  return (parseBits(value, 8) > 0);
+};
+
+var init = function(register) {
+  register(21, parseInt16);
+  register(23, parseInt32);
+  register(26, parseInt32);
+  register(1700, parseNumeric);
+  register(700, parseFloat32);
+  register(701, parseFloat64);
+  register(16, parseBool);
+  register(1114, parseDate.bind(null, false));
+  register(1184, parseDate.bind(null, true));
+  register(1000, parseArray);
+  register(1007, parseArray);
+  register(1016, parseArray);
+  register(1008, parseArray);
+  register(1009, parseArray);
+  register(25, parseText);
+};
+
+module.exports = {
+  init: init
+};
+
+
+/***/ }),
+/* 62 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var path = __webpack_require__(4)
+  , fs = __webpack_require__(15)
+  , helper = __webpack_require__(63)
+;
+
+
+module.exports = function(connInfo, cb) {
+    var file = helper.getFileName();
+    
+    fs.stat(file, function(err, stat){
+        if (err || !helper.usePgPass(stat, file)) {
+            return cb(undefined);
+        }
+
+        var st = fs.createReadStream(file);
+
+        helper.getPassword(connInfo, st, cb);
+    });
+};
+
+module.exports.warnTo = helper.warnTo;
+
+
+/***/ }),
+/* 63 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var path = __webpack_require__(4)
+  , Stream = __webpack_require__(9).Stream
+  , Split = __webpack_require__(64)
+  , util = __webpack_require__(1)
+  , defaultPort = 5432
+  , isWin = (process.platform === 'win32')
+  , warnStream = process.stderr
+;
+
+
+var S_IRWXG = 56     //    00070(8)
+  , S_IRWXO = 7      //    00007(8)
+  , S_IFMT  = 61440  // 00170000(8)
+  , S_IFREG = 32768  //  0100000(8)
+;
+function isRegFile(mode) {
+    return ((mode & S_IFMT) == S_IFREG);
+}
+
+var fieldNames = [ 'host', 'port', 'database', 'user', 'password' ];
+var nrOfFields = fieldNames.length;
+var passKey = fieldNames[ nrOfFields -1 ];
+
+
+function warn() {
+    var isWritable = (
+        warnStream instanceof Stream &&
+          true === warnStream.writable
+    );
+
+    if (isWritable) {
+        var args = Array.prototype.slice.call(arguments).concat("\n");
+        warnStream.write( util.format.apply(util, args) );
+    }
+}
+
+
+Object.defineProperty(module.exports, 'isWin', {
+    get : function() {
+        return isWin;
+    } ,
+    set : function(val) {
+        isWin = val;
+    }
+});
+
+
+module.exports.warnTo = function(stream) {
+    var old = warnStream;
+    warnStream = stream;
+    return old;
+};
+
+module.exports.getFileName = function(env){
+    env = env || process.env;
+    var file = env.PGPASSFILE || (
+        isWin ?
+          path.join( env.APPDATA , 'postgresql', 'pgpass.conf' ) :
+          path.join( env.HOME, '.pgpass' )
+    );
+    return file;
+};
+
+module.exports.usePgPass = function(stats, fname) {
+    if (Object.prototype.hasOwnProperty.call(process.env, 'PGPASSWORD')) {
+        return false;
+    }
+
+    if (isWin) {
+        return true;
+    }
+
+    fname = fname || '<unkn>';
+
+    if (! isRegFile(stats.mode)) {
+        warn('WARNING: password file "%s" is not a plain file', fname);
+        return false;
+    }
+
+    if (stats.mode & (S_IRWXG | S_IRWXO)) {
+        /* If password file is insecure, alert the user and ignore it. */
+        warn('WARNING: password file "%s" has group or world access; permissions should be u=rw (0600) or less', fname);
+        return false;
+    }
+
+    return true;
+};
+
+
+var matcher = module.exports.match = function(connInfo, entry) {
+    return fieldNames.slice(0, -1).reduce(function(prev, field, idx){
+        if (idx == 1) {
+            // the port
+            if ( Number( connInfo[field] || defaultPort ) === Number( entry[field] ) ) {
+                return prev && true;
+            }
+        }
+        return prev && (
+            entry[field] === '*' ||
+              entry[field] === connInfo[field]
+        );
+    }, true);
+};
+
+
+module.exports.getPassword = function(connInfo, stream, cb) {
+    var pass;
+    var lineStream = stream.pipe(new Split());
+
+    function onLine(line) {
+        var entry = parseLine(line);
+        if (entry && isValidEntry(entry) && matcher(connInfo, entry)) {
+            pass = entry[passKey];
+            lineStream.end(); // -> calls onEnd(), but pass is set now
+        }
+    }
+
+    var onEnd = function() {
+        stream.destroy();
+        cb(pass);
+    };
+
+    var onErr = function(err) {
+        stream.destroy();
+        warn('WARNING: error on reading file: %s', err);
+        cb(undefined);
+    };
+
+    stream.on('error', onErr);
+    lineStream
+        .on('data', onLine)
+        .on('end', onEnd)
+        .on('error', onErr)
+    ;
+
+};
+
+
+var parseLine = module.exports.parseLine = function(line) {
+    if (line.length < 11 || line.match(/^\s+#/)) {
+        return null;
+    }
+
+    var curChar = '';
+    var prevChar = '';
+    var fieldIdx = 0;
+    var startIdx = 0;
+    var endIdx = 0;
+    var obj = {};
+    var isLastField = false;
+    var addToObj = function(idx, i0, i1) {
+        var field = line.substring(i0, i1);
+
+        if (! Object.hasOwnProperty.call(process.env, 'PGPASS_NO_DEESCAPE')) {
+            field = field.replace(/\\([:\\])/g, '$1');
+        }
+
+        obj[ fieldNames[idx] ] = field;
+    };
+
+    for (var i = 0 ; i < line.length-1 ; i += 1) {
+        curChar = line.charAt(i+1);
+        prevChar = line.charAt(i);
+
+        isLastField = (fieldIdx == nrOfFields-1);
+
+        if (isLastField) {
+            addToObj(fieldIdx, startIdx);
+            break;
+        }
+
+        if (i >= 0 && curChar == ':' && prevChar !== '\\') {
+            addToObj(fieldIdx, startIdx, i+1);
+
+            startIdx = i+2;
+            fieldIdx += 1;
+        }
+    }
+
+    obj = ( Object.keys(obj).length === nrOfFields ) ? obj : null;
+
+    return obj;
+};
+
+
+var isValidEntry = module.exports.isValidEntry = function(entry){
+    var rules = {
+        // host
+        0 : function(x){
+            return x.length > 0;
+        } ,
+        // port
+        1 : function(x){
+            if (x === '*') {
+                return true;
+            }
+            x = Number(x);
+            return (
+                isFinite(x) &&
+                  x > 0 &&
+                  x < 9007199254740992 &&
+                  Math.floor(x) === x
+            );
+        } ,
+        // database
+        2 : function(x){
+            return x.length > 0;
+        } ,
+        // username
+        3 : function(x){
+            return x.length > 0;
+        } ,
+        // password
+        4 : function(x){
+            return x.length > 0;
+        }
+    };
+
+    for (var idx = 0 ; idx < fieldNames.length ; idx += 1) {
+        var rule = rules[idx];
+        var value = entry[ fieldNames[idx] ] || '';
+
+        var res = rule(value);
+        if (!res) {
+            return false;
+        }
+    }
+
+    return true;
+};
+
+
+
+/***/ }),
+/* 64 */
+/***/ (function(module, exports, __webpack_require__) {
+
+//filter will reemit the data if cb(err,pass) pass is truthy
+
+// reduce is more tricky
+// maybe we want to group the reductions or emit progress updates occasionally
+// the most basic reduce just emits one 'data' event after it has recieved 'end'
+
+
+var through = __webpack_require__(65)
+var Decoder = __webpack_require__(66).StringDecoder
+
+module.exports = split
+
+//TODO pass in a function to map across the lines.
+
+function split (matcher, mapper, options) {
+  var decoder = new Decoder()
+  var soFar = ''
+  var maxLength = options && options.maxLength;
+  var trailing = options && options.trailing === false ? false : true
+  if('function' === typeof matcher)
+    mapper = matcher, matcher = null
+  if (!matcher)
+    matcher = /\r?\n/
+
+  function emit(stream, piece) {
+    if(mapper) {
+      try {
+        piece = mapper(piece)
+      }
+      catch (err) {
+        return stream.emit('error', err)
+      }
+      if('undefined' !== typeof piece)
+        stream.queue(piece)
+    }
+    else
+      stream.queue(piece)
+  }
+
+  function next (stream, buffer) {
+    var pieces = ((soFar != null ? soFar : '') + buffer).split(matcher)
+    soFar = pieces.pop()
+
+    if (maxLength && soFar.length > maxLength)
+      return stream.emit('error', new Error('maximum buffer reached'))
+
+    for (var i = 0; i < pieces.length; i++) {
+      var piece = pieces[i]
+      emit(stream, piece)
+    }
+  }
+
+  return through(function (b) {
+    next(this, decoder.write(b))
+  },
+  function () {
+    if(decoder.end)
+      next(this, decoder.end())
+    if(trailing && soFar != null)
+      emit(this, soFar)
+    this.queue(null)
+  })
+}
+
+
+/***/ }),
+/* 65 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var Stream = __webpack_require__(9)
+
+// through
+//
+// a stream that does nothing but re-emit the input.
+// useful for aggregating a series of changing but not ending streams into one stream)
+
+exports = module.exports = through
+through.through = through
+
+//create a readable writable stream.
+
+function through (write, end, opts) {
+  write = write || function (data) { this.queue(data) }
+  end = end || function () { this.queue(null) }
+
+  var ended = false, destroyed = false, buffer = [], _ended = false
+  var stream = new Stream()
+  stream.readable = stream.writable = true
+  stream.paused = false
+
+//  stream.autoPause   = !(opts && opts.autoPause   === false)
+  stream.autoDestroy = !(opts && opts.autoDestroy === false)
+
+  stream.write = function (data) {
+    write.call(this, data)
+    return !stream.paused
+  }
+
+  function drain() {
+    while(buffer.length && !stream.paused) {
+      var data = buffer.shift()
+      if(null === data)
+        return stream.emit('end')
+      else
+        stream.emit('data', data)
+    }
+  }
+
+  stream.queue = stream.push = function (data) {
+//    console.error(ended)
+    if(_ended) return stream
+    if(data === null) _ended = true
+    buffer.push(data)
+    drain()
+    return stream
+  }
+
+  //this will be registered as the first 'end' listener
+  //must call destroy next tick, to make sure we're after any
+  //stream piped from here.
+  //this is only a problem if end is not emitted synchronously.
+  //a nicer way to do this is to make sure this is the last listener for 'end'
+
+  stream.on('end', function () {
+    stream.readable = false
+    if(!stream.writable && stream.autoDestroy)
+      process.nextTick(function () {
+        stream.destroy()
+      })
+  })
+
+  function _end () {
+    stream.writable = false
+    end.call(stream)
+    if(!stream.readable && stream.autoDestroy)
+      stream.destroy()
+  }
+
+  stream.end = function (data) {
+    if(ended) return
+    ended = true
+    if(arguments.length) stream.write(data)
+    _end() // will emit or queue
+    return stream
+  }
+
+  stream.destroy = function () {
+    if(destroyed) return
+    destroyed = true
+    ended = true
+    buffer.length = 0
+    stream.writable = stream.readable = false
+    stream.emit('close')
+    return stream
+  }
+
+  stream.pause = function () {
+    if(stream.paused) return
+    stream.paused = true
+    return stream
+  }
+
+  stream.resume = function () {
+    if(stream.paused) {
+      stream.paused = false
+      stream.emit('resume')
+    }
+    drain()
+    //may have become paused again,
+    //as drain emits 'data'.
+    if(!stream.paused)
+      stream.emit('drain')
+    return stream
+  }
+  return stream
+}
+
+
+
+/***/ }),
 /* 66 */
 /***/ (function(module, exports) {
 
 module.exports = require("string_decoder");
 
 /***/ }),
-/* 67 */,
-/* 68 */,
+/* 67 */
+/***/ (function(module, exports) {
+
+module.exports = require("dns");
+
+/***/ }),
+/* 68 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var url = __webpack_require__(69);
+
+//Parse method copied from https://github.com/brianc/node-postgres
+//Copyright (c) 2010-2014 Brian Carlson (brian.m.carlson@gmail.com)
+//MIT License
+
+//parses a connection string
+function parse(str) {
+  var config;
+  //unix socket
+  if(str.charAt(0) === '/') {
+    config = str.split(' ');
+    return { host: config[0], database: config[1] };
+  }
+  // url parse expects spaces encoded as %20
+  if(/ |%[^a-f0-9]|%[a-f0-9][^a-f0-9]/i.test(str)) {
+    str = encodeURI(str).replace(/\%25(\d\d)/g, "%$1");
+  }
+  var result = url.parse(str, true);
+  config = {};
+
+  if (result.query.application_name) {
+    config.application_name = result.query.application_name;
+  }
+  if (result.query.fallback_application_name) {
+    config.fallback_application_name = result.query.fallback_application_name;
+  }
+
+  config.port = result.port;
+  if(result.protocol == 'socket:') {
+    config.host = decodeURI(result.pathname);
+    config.database = result.query.db;
+    config.client_encoding = result.query.encoding;
+    return config;
+  }
+  config.host = result.hostname;
+
+  // result.pathname is not always guaranteed to have a '/' prefix (e.g. relative urls)
+  // only strip the slash if it is present.
+  var pathname = result.pathname;
+  if (pathname && pathname.charAt(0) === '/') {
+    pathname = result.pathname.slice(1) || null;
+  }
+  config.database = pathname && decodeURI(pathname);
+
+  var auth = (result.auth || ':').split(':');
+  config.user = auth[0];
+  config.password = auth.splice(1).join(':');
+
+  var ssl = result.query.ssl;
+  if (ssl === 'true' || ssl === '1') {
+    config.ssl = true;
+  }
+
+  return config;
+}
+
+module.exports = {
+  parse: parse
+};
+
+
+/***/ }),
 /* 69 */
 /***/ (function(module, exports) {
 
 module.exports = require("url");
 
 /***/ }),
-/* 70 */,
-/* 71 */,
+/* 70 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+/**
+ * Copyright (c) 2010-2017 Brian Carlson (brian.m.carlson@gmail.com)
+ * All rights reserved.
+ *
+ * This source code is licensed under the MIT license found in the
+ * README.md file in the root directory of this source tree.
+ */
+
+var EventEmitter = __webpack_require__(5).EventEmitter
+var util = __webpack_require__(1)
+
+var Result = __webpack_require__(71)
+var utils = __webpack_require__(13)
+
+var Query = function (config, values, callback) {
+  // use of "new" optional
+  if (!(this instanceof Query)) { return new Query(config, values, callback) }
+
+  config = utils.normalizeQueryConfig(config, values, callback)
+
+  this.text = config.text
+  this.values = config.values
+  this.rows = config.rows
+  this.types = config.types
+  this.name = config.name
+  this.binary = config.binary
+  this.stream = config.stream
+  // use unique portal name each time
+  this.portal = config.portal || ''
+  this.callback = config.callback
+  this._rowMode = config.rowMode
+  if (process.domain && config.callback) {
+    this.callback = process.domain.bind(config.callback)
+  }
+  this._result = new Result(this._rowMode, this.types)
+
+  // potential for multiple results
+  this._results = this._result
+  this.isPreparedStatement = false
+  this._canceledDueToError = false
+  this._promise = null
+  EventEmitter.call(this)
+}
+
+util.inherits(Query, EventEmitter)
+
+Query.prototype.requiresPreparation = function () {
+  // named queries must always be prepared
+  if (this.name) { return true }
+  // always prepare if there are max number of rows expected per
+  // portal execution
+  if (this.rows) { return true }
+  // don't prepare empty text queries
+  if (!this.text) { return false }
+  // prepare if there are values
+  if (!this.values) { return false }
+  return this.values.length > 0
+}
+
+Query.prototype._checkForMultirow = function () {
+  // if we already have a result with a command property
+  // then we've already executed one query in a multi-statement simple query
+  // turn our results into an array of results
+  if (this._result.command) {
+    if (!Array.isArray(this._results)) {
+      this._results = [this._result]
+    }
+    this._result = new Result(this._rowMode, this.types)
+    this._results.push(this._result)
+  }
+}
+
+// associates row metadata from the supplied
+// message with this query object
+// metadata used when parsing row results
+Query.prototype.handleRowDescription = function (msg) {
+  this._checkForMultirow()
+  this._result.addFields(msg.fields)
+  this._accumulateRows = this.callback || !this.listeners('row').length
+}
+
+Query.prototype.handleDataRow = function (msg) {
+  var row
+
+  if (this._canceledDueToError) {
+    return
+  }
+
+  try {
+    row = this._result.parseRow(msg.fields)
+  } catch (err) {
+    this._canceledDueToError = err
+    return
+  }
+
+  this.emit('row', row, this._result)
+  if (this._accumulateRows) {
+    this._result.addRow(row)
+  }
+}
+
+Query.prototype.handleCommandComplete = function (msg, con) {
+  this._checkForMultirow()
+  this._result.addCommandComplete(msg)
+  // need to sync after each command complete of a prepared statement
+  if (this.isPreparedStatement) {
+    con.sync()
+  }
+}
+
+// if a named prepared statement is created with empty query text
+// the backend will send an emptyQuery message but *not* a command complete message
+// execution on the connection will hang until the backend receives a sync message
+Query.prototype.handleEmptyQuery = function (con) {
+  if (this.isPreparedStatement) {
+    con.sync()
+  }
+}
+
+Query.prototype.handleReadyForQuery = function (con) {
+  if (this._canceledDueToError) {
+    return this.handleError(this._canceledDueToError, con)
+  }
+  if (this.callback) {
+    this.callback(null, this._results)
+  }
+  this.emit('end', this._results)
+}
+
+Query.prototype.handleError = function (err, connection) {
+  // need to sync after error during a prepared statement
+  if (this.isPreparedStatement) {
+    connection.sync()
+  }
+  if (this._canceledDueToError) {
+    err = this._canceledDueToError
+    this._canceledDueToError = false
+  }
+  // if callback supplied do not emit error event as uncaught error
+  // events will bubble up to node process
+  if (this.callback) {
+    return this.callback(err)
+  }
+  this.emit('error', err)
+}
+
+Query.prototype.submit = function (connection) {
+  if (typeof this.text !== 'string' && typeof this.name !== 'string') {
+    const err = new Error('A query must have either text or a name. Supplying neither is unsupported.')
+    connection.emit('error', err)
+    connection.emit('readyForQuery')
+    return
+  }
+  if (this.values && !Array.isArray(this.values)) {
+    const err = new Error('Query values must be an array')
+    connection.emit('error', err)
+    connection.emit('readyForQuery')
+    return
+  }
+  if (this.requiresPreparation()) {
+    this.prepare(connection)
+  } else {
+    connection.query(this.text)
+  }
+}
+
+Query.prototype.hasBeenParsed = function (connection) {
+  return this.name && connection.parsedStatements[this.name]
+}
+
+Query.prototype.handlePortalSuspended = function (connection) {
+  this._getRows(connection, this.rows)
+}
+
+Query.prototype._getRows = function (connection, rows) {
+  connection.execute({
+    portal: this.portal,
+    rows: rows
+  }, true)
+  connection.flush()
+}
+
+Query.prototype.prepare = function (connection) {
+  var self = this
+  // prepared statements need sync to be called after each command
+  // complete or when an error is encountered
+  this.isPreparedStatement = true
+  // TODO refactor this poor encapsulation
+  if (!this.hasBeenParsed(connection)) {
+    connection.parse({
+      text: self.text,
+      name: self.name,
+      types: self.types
+    }, true)
+  }
+
+  if (self.values) {
+    self.values = self.values.map(utils.prepareValue)
+  }
+
+  // http://developer.postgresql.org/pgdocs/postgres/protocol-flow.html#PROTOCOL-FLOW-EXT-QUERY
+  connection.bind({
+    portal: self.portal,
+    statement: self.name,
+    values: self.values,
+    binary: self.binary
+  }, true)
+
+  connection.describe({
+    type: 'P',
+    name: self.portal || ''
+  }, true)
+
+  this._getRows(connection, this.rows)
+}
+
+Query.prototype.handleCopyInResponse = function (connection) {
+  if (this.stream) this.stream.startStreamingToConnection(connection)
+  else connection.sendCopyFail('No source stream defined')
+}
+
+Query.prototype.handleCopyData = function (msg, connection) {
+  var chunk = msg.chunk
+  if (this.stream) {
+    this.stream.handleChunk(chunk)
+  }
+  // if there are no stream (for example when copy to query was sent by
+  // query method instead of copyTo) error will be handled
+  // on copyOutResponse event, so silently ignore this error here
+}
+module.exports = Query
+
+
+/***/ }),
+/* 71 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+/**
+ * Copyright (c) 2010-2017 Brian Carlson (brian.m.carlson@gmail.com)
+ * All rights reserved.
+ *
+ * This source code is licensed under the MIT license found in the
+ * README.md file in the root directory of this source tree.
+ */
+
+var types = __webpack_require__(8)
+
+// result object returned from query
+// in the 'end' event and also
+// passed as second argument to provided callback
+var Result = function (rowMode) {
+  this.command = null
+  this.rowCount = null
+  this.oid = null
+  this.rows = []
+  this.fields = []
+  this._parsers = []
+  this.RowCtor = null
+  this.rowAsArray = rowMode === 'array'
+  if (this.rowAsArray) {
+    this.parseRow = this._parseRowAsArray
+  }
+}
+
+var matchRegexp = /^([A-Za-z]+)(?: (\d+))?(?: (\d+))?/
+
+// adds a command complete message
+Result.prototype.addCommandComplete = function (msg) {
+  var match
+  if (msg.text) {
+    // pure javascript
+    match = matchRegexp.exec(msg.text)
+  } else {
+    // native bindings
+    match = matchRegexp.exec(msg.command)
+  }
+  if (match) {
+    this.command = match[1]
+    if (match[3]) {
+      // COMMMAND OID ROWS
+      this.oid = parseInt(match[2], 10)
+      this.rowCount = parseInt(match[3], 10)
+    } else if (match[2]) {
+      // COMMAND ROWS
+      this.rowCount = parseInt(match[2], 10)
+    }
+  }
+}
+
+Result.prototype._parseRowAsArray = function (rowData) {
+  var row = []
+  for (var i = 0, len = rowData.length; i < len; i++) {
+    var rawValue = rowData[i]
+    if (rawValue !== null) {
+      row.push(this._parsers[i](rawValue))
+    } else {
+      row.push(null)
+    }
+  }
+  return row
+}
+
+Result.prototype.parseRow = function (rowData) {
+  var row = {}
+  for (var i = 0, len = rowData.length; i < len; i++) {
+    var rawValue = rowData[i]
+    var field = this.fields[i].name
+    if (rawValue !== null) {
+      row[field] = this._parsers[i](rawValue)
+    } else {
+      row[field] = null
+    }
+  }
+  return row
+}
+
+Result.prototype.addRow = function (row) {
+  this.rows.push(row)
+}
+
+Result.prototype.addFields = function (fieldDescriptions) {
+  // clears field definitions
+  // multiple query statements in 1 action can result in multiple sets
+  // of rowDescriptions...eg: 'select NOW(); select 1::int;'
+  // you need to reset the fields
+  if (this.fields.length) {
+    this.fields = []
+    this._parsers = []
+  }
+  for (var i = 0; i < fieldDescriptions.length; i++) {
+    var desc = fieldDescriptions[i]
+    this.fields.push(desc)
+    var parser = this._getTypeParser(desc.dataTypeID, desc.format || 'text')
+    this._parsers.push(parser)
+  }
+}
+
+Result.prototype._getTypeParser = types.getTypeParser
+
+module.exports = Result
+
+
+/***/ }),
 /* 72 */
 /***/ (function(module, exports) {
 
 module.exports = require("net");
 
 /***/ }),
-/* 73 */,
-/* 74 */,
-/* 75 */,
-/* 76 */,
-/* 77 */,
-/* 78 */,
-/* 79 */,
+/* 73 */
+/***/ (function(module, exports) {
+
+//binary data writer tuned for creating
+//postgres message packets as effeciently as possible by reusing the
+//same buffer to avoid memcpy and limit memory allocations
+var Writer = module.exports = function(size) {
+  this.size = size || 1024;
+  this.buffer = Buffer(this.size + 5);
+  this.offset = 5;
+  this.headerPosition = 0;
+};
+
+//resizes internal buffer if not enough size left
+Writer.prototype._ensure = function(size) {
+  var remaining = this.buffer.length - this.offset;
+  if(remaining < size) {
+    var oldBuffer = this.buffer;
+    // exponential growth factor of around ~ 1.5
+    // https://stackoverflow.com/questions/2269063/buffer-growth-strategy
+    var newSize = oldBuffer.length + (oldBuffer.length >> 1) + size;
+    this.buffer = new Buffer(newSize);
+    oldBuffer.copy(this.buffer);
+  }
+};
+
+Writer.prototype.addInt32 = function(num) {
+  this._ensure(4);
+  this.buffer[this.offset++] = (num >>> 24 & 0xFF);
+  this.buffer[this.offset++] = (num >>> 16 & 0xFF);
+  this.buffer[this.offset++] = (num >>>  8 & 0xFF);
+  this.buffer[this.offset++] = (num >>>  0 & 0xFF);
+  return this;
+};
+
+Writer.prototype.addInt16 = function(num) {
+  this._ensure(2);
+  this.buffer[this.offset++] = (num >>>  8 & 0xFF);
+  this.buffer[this.offset++] = (num >>>  0 & 0xFF);
+  return this;
+};
+
+//for versions of node requiring 'length' as 3rd argument to buffer.write
+var writeString = function(buffer, string, offset, len) {
+  buffer.write(string, offset, len);
+};
+
+//overwrite function for older versions of node
+if(Buffer.prototype.write.length === 3) {
+  writeString = function(buffer, string, offset, len) {
+    buffer.write(string, offset);
+  };
+}
+
+Writer.prototype.addCString = function(string) {
+  //just write a 0 for empty or null strings
+  if(!string) {
+    this._ensure(1);
+  } else {
+    var len = Buffer.byteLength(string);
+    this._ensure(len + 1); //+1 for null terminator
+    writeString(this.buffer, string, this.offset, len);
+    this.offset += len;
+  }
+
+  this.buffer[this.offset++] = 0; // null terminator
+  return this;
+};
+
+Writer.prototype.addChar = function(c) {
+  this._ensure(1);
+  writeString(this.buffer, c, this.offset, 1);
+  this.offset++;
+  return this;
+};
+
+Writer.prototype.addString = function(string) {
+  string = string || "";
+  var len = Buffer.byteLength(string);
+  this._ensure(len);
+  this.buffer.write(string, this.offset);
+  this.offset += len;
+  return this;
+};
+
+Writer.prototype.getByteLength = function() {
+  return this.offset - 5;
+};
+
+Writer.prototype.add = function(otherBuffer) {
+  this._ensure(otherBuffer.length);
+  otherBuffer.copy(this.buffer, this.offset);
+  this.offset += otherBuffer.length;
+  return this;
+};
+
+Writer.prototype.clear = function() {
+  this.offset = 5;
+  this.headerPosition = 0;
+  this.lastEnd = 0;
+};
+
+//appends a header block to all the written data since the last
+//subsequent header or to the beginning if there is only one data block
+Writer.prototype.addHeader = function(code, last) {
+  var origOffset = this.offset;
+  this.offset = this.headerPosition;
+  this.buffer[this.offset++] = code;
+  //length is everything in this packet minus the code
+  this.addInt32(origOffset - (this.headerPosition+1));
+  //set next header position
+  this.headerPosition = origOffset;
+  //make space for next header
+  this.offset = origOffset;
+  if(!last) {
+    this._ensure(5);
+    this.offset += 5;
+  }
+};
+
+Writer.prototype.join = function(code) {
+  if(code) {
+    this.addHeader(code, true);
+  }
+  return this.buffer.slice(code ? 0 : 5, this.offset);
+};
+
+Writer.prototype.flush = function(code) {
+  var result = this.join(code);
+  this.clear();
+  return result;
+};
+
+
+/***/ }),
+/* 74 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var assert = __webpack_require__(16)
+
+var Reader = module.exports = function(options) {
+  //TODO - remove for version 1.0
+  if(typeof options == 'number') {
+    options = { headerSize: options }
+  }
+  options = options || {}
+  this.offset = 0
+  this.lastChunk = false
+  this.chunk = null
+  this.chunkLength = 0
+  this.headerSize = options.headerSize || 0
+  this.lengthPadding = options.lengthPadding || 0
+  this.header = null
+  assert(this.headerSize < 2, 'pre-length header of more than 1 byte length not currently supported')
+}
+
+Reader.prototype.addChunk = function(chunk) {
+  if (!this.chunk || this.offset === this.chunkLength) {
+    this.chunk = chunk
+    this.chunkLength = chunk.length
+    this.offset = 0
+    return
+  }
+
+  var newChunkLength = chunk.length
+  var newLength = this.chunkLength + newChunkLength
+
+  if (newLength > this.chunk.length) {
+    var newBufferLength = this.chunk.length * 2
+    while (newLength >= newBufferLength) {
+      newBufferLength *= 2
+    }
+    var newBuffer = new Buffer(newBufferLength)
+    this.chunk.copy(newBuffer)
+    this.chunk = newBuffer
+  }
+  chunk.copy(this.chunk, this.chunkLength)
+  this.chunkLength = newLength
+}
+
+Reader.prototype.read = function() {
+  if(this.chunkLength < (this.headerSize + 4 + this.offset)) {
+    return false
+  }
+
+  if(this.headerSize) {
+    this.header = this.chunk[this.offset]
+  }
+
+  //read length of next item
+  var length = this.chunk.readUInt32BE(this.offset + this.headerSize) + this.lengthPadding
+
+  //next item spans more chunks than we have
+  var remaining = this.chunkLength - (this.offset + 4 + this.headerSize)
+  if(length > remaining) {
+    return false
+  }
+
+  this.offset += (this.headerSize + 4)
+  var result = this.chunk.slice(this.offset, this.offset + length)
+  this.offset += length
+  return result
+}
+
+
+/***/ }),
+/* 75 */
+/***/ (function(module, exports) {
+
+module.exports = require("tls");
+
+/***/ }),
+/* 76 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+const EventEmitter = __webpack_require__(5).EventEmitter
+
+const NOOP = function () { }
+
+const removeWhere = (list, predicate) => {
+  const i = list.findIndex(predicate)
+
+  return i === -1
+    ? undefined
+    : list.splice(i, 1)[0]
+}
+
+class IdleItem {
+  constructor (client, timeoutId) {
+    this.client = client
+    this.timeoutId = timeoutId
+  }
+}
+
+function throwOnRelease () {
+  throw new Error('Release called on client which has already been released to the pool.')
+}
+
+function release (client, err) {
+  client.release = throwOnRelease
+  if (err || this.ending) {
+    this._remove(client)
+    this._pulseQueue()
+    return
+  }
+
+  // idle timeout
+  let tid
+  if (this.options.idleTimeoutMillis) {
+    tid = setTimeout(() => {
+      this.log('remove idle client')
+      this._remove(client)
+    }, this.options.idleTimeoutMillis)
+  }
+
+  this._idle.push(new IdleItem(client, tid))
+  this._pulseQueue()
+}
+
+function promisify (Promise, callback) {
+  if (callback) {
+    return { callback: callback, result: undefined }
+  }
+  let rej
+  let res
+  const cb = function (err, client) {
+    err ? rej(err) : res(client)
+  }
+  const result = new Promise(function (resolve, reject) {
+    res = resolve
+    rej = reject
+  })
+  return { callback: cb, result: result }
+}
+
+class Pool extends EventEmitter {
+  constructor (options, Client) {
+    super()
+    this.options = Object.assign({}, options)
+    this.options.max = this.options.max || this.options.poolSize || 10
+    this.log = this.options.log || function () { }
+    this.Client = this.options.Client || Client || __webpack_require__(25).Client
+    this.Promise = this.options.Promise || global.Promise
+
+    if (typeof this.options.idleTimeoutMillis === 'undefined') {
+      this.options.idleTimeoutMillis = 10000
+    }
+
+    this._clients = []
+    this._idle = []
+    this._pendingQueue = []
+    this._endCallback = undefined
+    this.ending = false
+  }
+
+  _isFull () {
+    return this._clients.length >= this.options.max
+  }
+
+  _pulseQueue () {
+    this.log('pulse queue')
+    if (this.ending) {
+      this.log('pulse queue on ending')
+      if (this._idle.length) {
+        this._idle.slice().map(item => {
+          this._remove(item.client)
+        })
+      }
+      if (!this._clients.length) {
+        this._endCallback()
+      }
+      return
+    }
+    // if we don't have any waiting, do nothing
+    if (!this._pendingQueue.length) {
+      this.log('no queued requests')
+      return
+    }
+    // if we don't have any idle clients and we have no more room do nothing
+    if (!this._idle.length && this._isFull()) {
+      return
+    }
+    const waiter = this._pendingQueue.shift()
+    if (this._idle.length) {
+      const idleItem = this._idle.pop()
+      clearTimeout(idleItem.timeoutId)
+      const client = idleItem.client
+      client.release = release.bind(this, client)
+      this.emit('acquire', client)
+      return waiter(undefined, client, client.release)
+    }
+    if (!this._isFull()) {
+      return this.connect(waiter)
+    }
+    throw new Error('unexpected condition')
+  }
+
+  _remove (client) {
+    const removed = removeWhere(
+      this._idle,
+      item => item.client === client
+    )
+
+    if (removed !== undefined) {
+      clearTimeout(removed.timeoutId)
+    }
+
+    this._clients = this._clients.filter(c => c !== client)
+    client.end()
+    this.emit('remove', client)
+  }
+
+  connect (cb) {
+    if (this.ending) {
+      const err = new Error('Cannot use a pool after calling end on the pool')
+      return cb ? cb(err) : this.Promise.reject(err)
+    }
+
+    // if we don't have to connect a new client, don't do so
+    if (this._clients.length >= this.options.max || this._idle.length) {
+      const response = promisify(this.Promise, cb)
+      const result = response.result
+
+      // if we have idle clients schedule a pulse immediately
+      if (this._idle.length) {
+        process.nextTick(() => this._pulseQueue())
+      }
+
+      if (!this.options.connectionTimeoutMillis) {
+        this._pendingQueue.push(response.callback)
+        return result
+      }
+
+      // set connection timeout on checking out an existing client
+      const tid = setTimeout(() => {
+        // remove the callback from pending waiters because
+        // we're going to call it with a timeout error
+        this._pendingQueue = this._pendingQueue.filter(cb => cb === response.callback)
+        response.callback(new Error('timeout exceeded when trying to connect'))
+      }, this.options.connectionTimeoutMillis)
+
+      this._pendingQueue.push(function (err, res, done) {
+        clearTimeout(tid)
+        response.callback(err, res, done)
+      })
+      return result
+    }
+
+    const client = new this.Client(this.options)
+    this._clients.push(client)
+    const idleListener = (err) => {
+      err.client = client
+      client.removeListener('error', idleListener)
+      client.on('error', () => {
+        this.log('additional client error after disconnection due to error', err)
+      })
+      this._remove(client)
+      // TODO - document that once the pool emits an error
+      // the client has already been closed & purged and is unusable
+      this.emit('error', err, client)
+    }
+
+    this.log('connecting new client')
+
+    // connection timeout logic
+    let tid
+    let timeoutHit = false
+    if (this.options.connectionTimeoutMillis) {
+      tid = setTimeout(() => {
+        this.log('ending client due to timeout')
+        timeoutHit = true
+        // force kill the node driver, and let libpq do its teardown
+        client.connection ? client.connection.stream.destroy() : client.end()
+      }, this.options.connectionTimeoutMillis)
+    }
+
+    const response = promisify(this.Promise, cb)
+    cb = response.callback
+
+    this.log('connecting new client')
+    client.connect((err) => {
+      this.log('new client connected')
+      if (tid) {
+        clearTimeout(tid)
+      }
+      client.on('error', idleListener)
+      if (err) {
+        // remove the dead client from our list of clients
+        this._clients = this._clients.filter(c => c !== client)
+        if (timeoutHit) {
+          err.message = 'Connection terminiated due to connection timeout'
+        }
+        cb(err, undefined, NOOP)
+      } else {
+        client.release = release.bind(this, client)
+        this.emit('connect', client)
+        this.emit('acquire', client)
+        if (this.options.verify) {
+          this.options.verify(client, cb)
+        } else {
+          cb(undefined, client, client.release)
+        }
+      }
+    })
+    return response.result
+  }
+
+  query (text, values, cb) {
+    // guard clause against passing a function as the first parameter
+    if (typeof text === 'function') {
+      const response = promisify(this.Promise, text)
+      setImmediate(function () {
+        return response.callback(new Error('Passing a function as the first parameter to pool.query is not supported'))
+      })
+      return response.result
+    }
+
+    // allow plain text query without values
+    if (typeof values === 'function') {
+      cb = values
+      values = undefined
+    }
+    const response = promisify(this.Promise, cb)
+    cb = response.callback
+    this.connect((err, client) => {
+      if (err) {
+        return cb(err)
+      }
+      this.log('dispatching query')
+      client.query(text, values, (err, res) => {
+        this.log('query dispatched')
+        client.release(err)
+        if (err) {
+          return cb(err)
+        } else {
+          return cb(undefined, res)
+        }
+      })
+    })
+    return response.result
+  }
+
+  end (cb) {
+    this.log('ending')
+    if (this.ending) {
+      const err = new Error('Called end on pool more than once')
+      return cb ? cb(err) : this.Promise.reject(err)
+    }
+    this.ending = true
+    const promised = promisify(this.Promise, cb)
+    this._endCallback = promised.callback
+    this._pulseQueue()
+    return promised.result
+  }
+
+  get waitingCount () {
+    return this._pendingQueue.length
+  }
+
+  get idleCount () {
+    return this._idle.length
+  }
+
+  get totalCount () {
+    return this._clients.length
+  }
+}
+module.exports = Pool
+
+
+/***/ }),
+/* 77 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+/**
+ * Copyright (c) 2010-2017 Brian Carlson (brian.m.carlson@gmail.com)
+ * All rights reserved.
+ *
+ * This source code is licensed under the MIT license found in the
+ * README.md file in the root directory of this source tree.
+ */
+
+var Native = __webpack_require__(78)
+var TypeOverrides = __webpack_require__(28)
+var semver = __webpack_require__(85)
+var pkg = __webpack_require__(86)
+var assert = __webpack_require__(16)
+var EventEmitter = __webpack_require__(5).EventEmitter
+var util = __webpack_require__(1)
+var ConnectionParameters = __webpack_require__(29)
+
+var msg = 'Version >= ' + pkg.minNativeVersion + ' of pg-native required.'
+assert(semver.gte(Native.version, pkg.minNativeVersion), msg)
+
+var NativeQuery = __webpack_require__(87)
+
+var Client = module.exports = function (config) {
+  EventEmitter.call(this)
+  config = config || {}
+
+  this._types = new TypeOverrides(config.types)
+
+  this.native = new Native({
+    types: this._types
+  })
+
+  this._queryQueue = []
+  this._connected = false
+  this._connecting = false
+
+  // keep these on the object for legacy reasons
+  // for the time being. TODO: deprecate all this jazz
+  var cp = this.connectionParameters = new ConnectionParameters(config)
+  this.user = cp.user
+  this.password = cp.password
+  this.database = cp.database
+  this.host = cp.host
+  this.port = cp.port
+
+  // a hash to hold named queries
+  this.namedQueries = {}
+}
+
+Client.Query = NativeQuery
+
+util.inherits(Client, EventEmitter)
+
+// connect to the backend
+// pass an optional callback to be called once connected
+// or with an error if there was a connection error
+// if no callback is passed and there is a connection error
+// the client will emit an error event.
+Client.prototype.connect = function (cb) {
+  var self = this
+
+  var onError = function (err) {
+    if (cb) return cb(err)
+    return self.emit('error', err)
+  }
+
+  var result
+  if (!cb) {
+    var resolveOut, rejectOut
+    cb = (err) => err ? rejectOut(err) : resolveOut()
+    result = new global.Promise(function (resolve, reject) {
+      resolveOut = resolve
+      rejectOut = reject
+    })
+  }
+
+  if (this._connecting) {
+    process.nextTick(() => cb(new Error('Client has already been connected. You cannot reuse a client.')))
+    return result
+  }
+
+  this._connecting = true
+
+  this.connectionParameters.getLibpqConnectionString(function (err, conString) {
+    if (err) return onError(err)
+    self.native.connect(conString, function (err) {
+      if (err) return onError(err)
+
+      // set internal states to connected
+      self._connected = true
+
+      // handle connection errors from the native layer
+      self.native.on('error', function (err) {
+        // error will be handled by active query
+        if (self._activeQuery && self._activeQuery.state !== 'end') {
+          return
+        }
+        self.emit('error', err)
+      })
+
+      self.native.on('notification', function (msg) {
+        self.emit('notification', {
+          channel: msg.relname,
+          payload: msg.extra
+        })
+      })
+
+      // signal we are connected now
+      self.emit('connect')
+      self._pulseQueryQueue(true)
+
+      // possibly call the optional callback
+      if (cb) cb()
+    })
+  })
+
+  return result
+}
+
+// send a query to the server
+// this method is highly overloaded to take
+// 1) string query, optional array of parameters, optional function callback
+// 2) object query with {
+//    string query
+//    optional array values,
+//    optional function callback instead of as a separate parameter
+//    optional string name to name & cache the query plan
+//    optional string rowMode = 'array' for an array of results
+//  }
+Client.prototype.query = function (config, values, callback) {
+  if (typeof config.submit === 'function') {
+    // accept query(new Query(...), (err, res) => { }) style
+    if (typeof values === 'function') {
+      config.callback = values
+    }
+    this._queryQueue.push(config)
+    this._pulseQueryQueue()
+    return config
+  }
+
+  var query = new NativeQuery(config, values, callback)
+  var result
+  if (!query.callback) {
+    let resolveOut, rejectOut
+    result = new Promise((resolve, reject) => {
+      resolveOut = resolve
+      rejectOut = reject
+    })
+    query.callback = (err, res) => err ? rejectOut(err) : resolveOut(res)
+  }
+  this._queryQueue.push(query)
+  this._pulseQueryQueue()
+  return result
+}
+
+// disconnect from the backend server
+Client.prototype.end = function (cb) {
+  var self = this
+  if (!this._connected) {
+    this.once('connect', this.end.bind(this, cb))
+  }
+  var result
+  if (!cb) {
+    var resolve, reject
+    cb = (err) => err ? reject(err) : resolve()
+    result = new global.Promise(function (res, rej) {
+      resolve = res
+      reject = rej
+    })
+  }
+  this.native.end(function () {
+    // send an error to the active query
+    if (self._hasActiveQuery()) {
+      var msg = 'Connection terminated'
+      self._queryQueue.length = 0
+      self._activeQuery.handleError(new Error(msg))
+    }
+    self.emit('end')
+    if (cb) cb()
+  })
+  return result
+}
+
+Client.prototype._hasActiveQuery = function () {
+  return this._activeQuery && this._activeQuery.state !== 'error' && this._activeQuery.state !== 'end'
+}
+
+Client.prototype._pulseQueryQueue = function (initialConnection) {
+  if (!this._connected) {
+    return
+  }
+  if (this._hasActiveQuery()) {
+    return
+  }
+  var query = this._queryQueue.shift()
+  if (!query) {
+    if (!initialConnection) {
+      this.emit('drain')
+    }
+    return
+  }
+  this._activeQuery = query
+  query.submit(this)
+  var self = this
+  query.once('_done', function () {
+    self._pulseQueryQueue()
+  })
+}
+
+// attempt to cancel an in-progress query
+Client.prototype.cancel = function (query) {
+  if (this._activeQuery === query) {
+    this.native.cancel(function () {})
+  } else if (this._queryQueue.indexOf(query) !== -1) {
+    this._queryQueue.splice(this._queryQueue.indexOf(query), 1)
+  }
+}
+
+Client.prototype.setTypeParser = function (oid, format, parseFn) {
+  return this._types.setTypeParser(oid, format, parseFn)
+}
+
+Client.prototype.getTypeParser = function (oid, format) {
+  return this._types.getTypeParser(oid, format)
+}
+
+
+/***/ }),
+/* 78 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var Libpq = __webpack_require__(79)
+var EventEmitter = __webpack_require__(5).EventEmitter
+var util = __webpack_require__(1)
+var assert = __webpack_require__(16)
+var types = __webpack_require__(8)
+var buildResult = __webpack_require__(82)
+var CopyStream = __webpack_require__(83)
+
+var Client = module.exports = function (config) {
+  if (!(this instanceof Client)) {
+    return new Client(config)
+  }
+
+  config = config || {}
+
+  EventEmitter.call(this)
+  this.pq = new Libpq()
+  this._reading = false
+  this._read = this._read.bind(this)
+
+  // allow custom type converstion to be passed in
+  this._types = config.types || types
+
+  // allow config to specify returning results
+  // as an array of values instead of a hash
+  this.arrayMode = config.arrayMode || false
+  this._resultCount = 0
+  this._rows = undefined
+  this._results = undefined
+
+  // lazy start the reader if notifications are listened for
+  // this way if you only run sync queries you wont block
+  // the event loop artificially
+  this.on('newListener', (event) => {
+    if (event !== 'notification') return
+    this._startReading()
+  })
+
+  this.on('result', this._onResult.bind(this))
+  this.on('readyForQuery', this._onReadyForQuery.bind(this))
+}
+
+util.inherits(Client, EventEmitter)
+
+Client.prototype.connect = function (params, cb) {
+  this.pq.connect(params, cb)
+}
+
+Client.prototype.connectSync = function (params) {
+  this.pq.connectSync(params)
+}
+
+Client.prototype.query = function (text, values, cb) {
+  var queryFn
+
+  if (typeof values === 'function') {
+    cb = values
+    queryFn = function () { return self.pq.sendQuery(text) }
+  } else {
+    queryFn = function () { return self.pq.sendQueryParams(text, values) }
+  }
+
+  var self = this
+
+  self._dispatchQuery(self.pq, queryFn, function (err) {
+    if (err) return cb(err)
+
+    self._awaitResult(cb)
+  })
+}
+
+Client.prototype.prepare = function (statementName, text, nParams, cb) {
+  var self = this
+  var fn = function () {
+    return self.pq.sendPrepare(statementName, text, nParams)
+  }
+
+  self._dispatchQuery(self.pq, fn, function (err) {
+    if (err) return cb(err)
+    self._awaitResult(cb)
+  })
+}
+
+Client.prototype.execute = function (statementName, parameters, cb) {
+  var self = this
+
+  var fn = function () {
+    return self.pq.sendQueryPrepared(statementName, parameters)
+  }
+
+  self._dispatchQuery(self.pq, fn, function (err, rows) {
+    if (err) return cb(err)
+    self._awaitResult(cb)
+  })
+}
+
+Client.prototype.getCopyStream = function () {
+  this.pq.setNonBlocking(true)
+  this._stopReading()
+  return new CopyStream(this.pq)
+}
+
+// cancel a currently executing query
+Client.prototype.cancel = function (cb) {
+  assert(cb, 'Callback is required')
+  // result is either true or a string containing an error
+  var result = this.pq.cancel()
+  return setImmediate(function () {
+    cb(result === true ? undefined : new Error(result))
+  })
+}
+
+Client.prototype.querySync = function (text, values) {
+  if (values) {
+    this.pq.execParams(text, values)
+  } else {
+    this.pq.exec(text)
+  }
+
+  throwIfError(this.pq)
+  const result = buildResult(this.pq, this._types, this.arrayMode)
+  return result.rows
+}
+
+Client.prototype.prepareSync = function (statementName, text, nParams) {
+  this.pq.prepare(statementName, text, nParams)
+  throwIfError(this.pq)
+}
+
+Client.prototype.executeSync = function (statementName, parameters) {
+  this.pq.execPrepared(statementName, parameters)
+  throwIfError(this.pq)
+  return buildResult(this.pq, this._types, this.arrayMode).rows
+}
+
+Client.prototype.escapeLiteral = function (value) {
+  return this.pq.escapeLiteral(value)
+}
+
+Client.prototype.escapeIdentifier = function (value) {
+  return this.pq.escapeIdentifier(value)
+}
+
+// export the version number so we can check it in node-postgres
+module.exports.version = __webpack_require__(84).version
+
+Client.prototype.end = function (cb) {
+  this._stopReading()
+  this.pq.finish()
+  if (cb) setImmediate(cb)
+}
+
+Client.prototype._readError = function (message) {
+  var err = new Error(message || this.pq.errorMessage())
+  this.emit('error', err)
+}
+
+Client.prototype._stopReading = function () {
+  if (!this._reading) return
+  this._reading = false
+  this.pq.stopReader()
+  this.pq.removeListener('readable', this._read)
+}
+
+Client.prototype._consumeQueryResults = function (pq) {
+  return buildResult(pq, this._types, this.arrayMode)
+}
+
+Client.prototype._emitResult = function (pq) {
+  var status = pq.resultStatus()
+  switch (status) {
+    case 'PGRES_FATAL_ERROR':
+      this._queryError = new Error(this.pq.resultErrorMessage())
+      break
+
+    case 'PGRES_TUPLES_OK':
+    case 'PGRES_COMMAND_OK':
+    case 'PGRES_EMPTY_QUERY':
+      const result = this._consumeQueryResults(this.pq)
+      this.emit('result', result)
+      break
+
+    case 'PGRES_COPY_OUT':
+    case 'PGRES_COPY_BOTH': {
+      break
+    }
+
+    default:
+      this._readError('unrecognized command status: ' + status)
+      break
+  }
+  return status
+}
+
+// called when libpq is readable
+Client.prototype._read = function () {
+  var pq = this.pq
+  // read waiting data from the socket
+  // e.g. clear the pending 'select'
+  if (!pq.consumeInput()) {
+    // if consumeInput returns false
+    // than a read error has been encountered
+    return this._readError()
+  }
+
+  // check if there is still outstanding data
+  // if so, wait for it all to come in
+  if (pq.isBusy()) {
+    return
+  }
+
+  // load our result object
+
+  while (pq.getResult()) {
+    const resultStatus = this._emitResult(this.pq)
+
+    // if the command initiated copy mode we need to break out of the read loop
+    // so a substream can begin to read copy data
+    if (resultStatus === 'PGRES_COPY_BOTH' || resultStatus === 'PGRES_COPY_OUT') {
+      break
+    }
+
+    // if reading multiple results, sometimes the following results might cause
+    // a blocking read. in this scenario yield back off the reader until libpq is readable
+    if (pq.isBusy()) {
+      return
+    }
+  }
+
+  this.emit('readyForQuery')
+
+  var notice = this.pq.notifies()
+  while (notice) {
+    this.emit('notification', notice)
+    notice = this.pq.notifies()
+  }
+}
+
+// ensures the client is reading and
+// everything is set up for async io
+Client.prototype._startReading = function () {
+  if (this._reading) return
+  this._reading = true
+  this.pq.on('readable', this._read)
+  this.pq.startReader()
+}
+
+var throwIfError = function (pq) {
+  var err = pq.resultErrorMessage() || pq.errorMessage()
+  if (err) {
+    throw new Error(err)
+  }
+}
+
+Client.prototype._awaitResult = function (cb) {
+  this._queryCallback = cb
+  return this._startReading()
+}
+
+// wait for the writable socket to drain
+Client.prototype._waitForDrain = function (pq, cb) {
+  var res = pq.flush()
+  // res of 0 is success
+  if (res === 0) return cb()
+
+  // res of -1 is failure
+  if (res === -1) return cb(pq.errorMessage())
+
+  // otherwise outgoing message didn't flush to socket
+  // wait for it to flush and try again
+  var self = this
+  // you cannot read & write on a socket at the same time
+  return pq.writable(function () {
+    self._waitForDrain(pq, cb)
+  })
+}
+
+// send an async query to libpq and wait for it to
+// finish writing query text to the socket
+Client.prototype._dispatchQuery = function (pq, fn, cb) {
+  this._stopReading()
+  var success = pq.setNonBlocking(true)
+  if (!success) return cb(new Error('Unable to set non-blocking to true'))
+  var sent = fn()
+  if (!sent) return cb(new Error(pq.errorMessage() || 'Something went wrong dispatching the query'))
+  this._waitForDrain(pq, cb)
+}
+
+Client.prototype._onResult = function (result) {
+  if (this._resultCount === 0) {
+    this._results = result
+    this._rows = result.rows
+  } else if (this._resultCount === 1) {
+    this._results = [this._results, result]
+    this._rows = [this._rows, result.rows]
+  } else {
+    this._results.push(result)
+    this._rows.push(result.rows)
+  }
+  this._resultCount++
+}
+
+Client.prototype._onReadyForQuery = function () {
+  // remove instance callback
+  const cb = this._queryCallback
+  this._queryCallback = undefined
+
+  // remove instance query error
+  const err = this._queryError
+  this._queryError = undefined
+
+  // remove instance rows
+  const rows = this._rows
+  this._rows = undefined
+
+  // remove instance results
+  const results = this._results
+  this._results = undefined
+
+  this._resultCount = 0
+
+  if (cb) {
+    cb(err, rows || [], results)
+  }
+}
+
+
+/***/ }),
+/* 79 */
+/***/ (function(module, exports, __webpack_require__) {
+
+/* WEBPACK VAR INJECTION */(function(module, __dirname) {var PQ = module.exports = __webpack_require__(81)('addon.node').PQ;
+
+//print out the include dir
+//if you want to include this in a binding.gyp file
+if(!module.parent) {
+  var path = __webpack_require__(4);
+  console.log(path.normalize(__dirname + '/src'));
+}
+
+var EventEmitter = __webpack_require__(5).EventEmitter;
+var assert = __webpack_require__(16);
+
+for(var key in EventEmitter.prototype) {
+  PQ.prototype[key] = EventEmitter.prototype[key];
+}
+
+//SYNC connects to the server
+//throws an exception in the event of a connection error
+PQ.prototype.connectSync = function(paramString) {
+  this.connected = true;
+  if(!paramString) {
+    paramString = '';
+  }
+  var connected = this.$connectSync(paramString);
+  if(!connected) {
+    var err = new Error(this.errorMessage());
+    this.finish();
+    throw err;
+  }
+};
+
+//connects async using a background thread
+//calls the callback with an error if there was one
+PQ.prototype.connect = function(paramString, cb) {
+  this.connected = true;
+  if(typeof paramString == 'function') {
+    cb = paramString;
+    paramString = '';
+  }
+  if(!paramString) {
+    paramString = '';
+  }
+  assert(cb, 'Must provide a connection callback');
+  if(process.domain) {
+    cb = process.domain.bind(cb);
+  }
+  this.$connect(paramString, cb);
+};
+
+PQ.prototype.errorMessage = function() {
+  return this.$getLastErrorMessage();
+};
+
+//returns an int for the fd of the socket
+PQ.prototype.socket = function() {
+  return this.$socket();
+};
+
+// return server version number e.g. 90300
+PQ.prototype.serverVersion = function () {
+  return this.$serverVersion();
+};
+
+//finishes the connection & closes it
+PQ.prototype.finish = function() {
+  this.connected = false;
+  this.$finish();
+};
+
+////SYNC executes a plain text query
+//immediately stores the results within the PQ object for consumption with
+//ntuples, getvalue, etc...
+//returns false if there was an error
+//consume additional error details via PQ#errorMessage & friends
+PQ.prototype.exec = function(commandText) {
+  if(!commandText) {
+    commandText = '';
+  }
+  this.$exec(commandText);
+};
+
+//SYNC executes a query with parameters
+//immediately stores the results within the PQ object for consumption with
+//ntuples, getvalue, etc...
+//returns false if there was an error
+//consume additional error details via PQ#errorMessage & friends
+PQ.prototype.execParams = function(commandText, parameters) {
+  if(!commandText) {
+    commandText = '';
+  }
+  if(!parameters) {
+    parameters = [];
+  }
+  this.$execParams(commandText, parameters);
+};
+
+//SYNC prepares a named query and stores the result
+//immediately stores the results within the PQ object for consumption with
+//ntuples, getvalue, etc...
+//returns false if there was an error
+//consume additional error details via PQ#errorMessage & friends
+PQ.prototype.prepare = function(statementName, commandText, nParams) {
+  assert.equal(arguments.length, 3, 'Must supply 3 arguments');
+  if(!statementName) {
+    statementName = '';
+  }
+  if(!commandText) {
+    commandText = '';
+  }
+  nParams = Number(nParams) || 0;
+  this.$prepare(statementName, commandText, nParams);
+};
+
+//SYNC executes a named, prepared query and stores the result
+//immediately stores the results within the PQ object for consumption with
+//ntuples, getvalue, etc...
+//returns false if there was an error
+//consume additional error details via PQ#errorMessage & friends
+PQ.prototype.execPrepared = function(statementName, parameters) {
+  if(!statementName) {
+    statementName = '';
+  }
+  if(!parameters) {
+    parameters = [];
+  }
+  this.$execPrepared(statementName, parameters);
+};
+
+//send a command to begin executing a query in async mode
+//returns true if sent, or false if there was a send failure
+PQ.prototype.sendQuery = function(commandText) {
+  if(!commandText) {
+    commandText = '';
+  }
+  return this.$sendQuery(commandText);
+};
+
+//send a command to begin executing a query with parameters in async mode
+//returns true if sent, or false if there was a send failure
+PQ.prototype.sendQueryParams = function(commandText, parameters) {
+  if(!commandText) {
+    commandText = '';
+  }
+  if(!parameters) {
+    parameters = [];
+  }
+  return this.$sendQueryParams(commandText, parameters);
+};
+
+//send a command to prepare a named query in async mode
+//returns true if sent, or false if there was a send failure
+PQ.prototype.sendPrepare = function(statementName, commandText, nParams) {
+  assert.equal(arguments.length, 3, 'Must supply 3 arguments');
+  if(!statementName) {
+    statementName = '';
+  }
+  if(!commandText) {
+    commandText = '';
+  }
+  nParams = Number(nParams) || 0;
+  return this.$sendPrepare(statementName, commandText, nParams);
+};
+
+//send a command to execute a named query in async mode
+//returns true if sent, or false if there was a send failure
+PQ.prototype.sendQueryPrepared = function(statementName, parameters) {
+  if(!statementName) {
+    statementName = '';
+  }
+  if(!parameters) {
+    parameters = [];
+  }
+  return this.$sendQueryPrepared(statementName, parameters);
+};
+
+//'pops' a result out of the buffered
+//response data read during async command execution
+//and stores it on the c/c++ object so you can consume
+//the data from it.  returns true if there was a pending result
+//or false if there was no pending result. if there was no pending result
+//the last found result is not overwritten so you can call getResult as many
+//times as you want, and you'll always have the last available result for consumption
+PQ.prototype.getResult = function() {
+  return this.$getResult();
+};
+
+//returns a text of the enum associated with the result
+//usually just PGRES_COMMAND_OK or PGRES_FATAL_ERROR
+PQ.prototype.resultStatus = function() {
+  return this.$resultStatus();
+};
+
+PQ.prototype.resultErrorMessage = function() {
+  return this.$resultErrorMessage();
+};
+
+PQ.prototype.resultErrorFields = function() {
+  return this.$resultErrorFields();
+};
+
+//free the memory associated with a result
+//this is somewhat handled for you within the c/c++ code
+//by never allowing the code to 'leak' a result. still,
+//if you absolutely want to free it yourself, you can use this.
+PQ.prototype.clear = function() {
+  this.$clear();
+};
+
+//returns the number of tuples (rows) in the result set
+PQ.prototype.ntuples = function() {
+  return this.$ntuples();
+};
+
+//returns the number of fields (columns) in the result set
+PQ.prototype.nfields = function() {
+  return this.$nfields();
+};
+
+//returns the name of the field (column) at the given offset
+PQ.prototype.fname = function(offset) {
+  return this.$fname(offset);
+};
+
+//returns the Oid of the type for the given field
+PQ.prototype.ftype = function(offset) {
+  return this.$ftype(offset);
+};
+
+//returns a text value at the given row/col
+//if the value is null this still returns empty string
+//so you need to use PQ#getisnull to determine
+PQ.prototype.getvalue = function(row, col) {
+  return this.$getvalue(row, col);
+};
+
+//returns true/false if the value is null
+PQ.prototype.getisnull = function(row, col) {
+  return this.$getisnull(row, col);
+};
+
+//returns the status of the command
+PQ.prototype.cmdStatus = function() {
+  return this.$cmdStatus();
+};
+
+//returns the tuples in the command
+PQ.prototype.cmdTuples = function() {
+  return this.$cmdTuples();
+};
+
+//starts the 'read ready' libuv socket listener.
+//Once the socket becomes readable, the PQ instance starts
+//emitting 'readable' events.  Similar to how node's readable-stream
+//works except to clear the SELECT() notification you need to call
+//PQ#consumeInput instead of letting node pull the data off the socket
+//http://www.postgresql.org/docs/9.1/static/libpq-async.html
+PQ.prototype.startReader = function() {
+  assert(this.connected, 'Must be connected to start reader');
+  this.$startRead();
+};
+
+//suspends the libuv socket 'read ready' listener
+PQ.prototype.stopReader = function() {
+  this.$stopRead();
+};
+
+PQ.prototype.writable = function(cb) {
+  assert(this.connected, 'Must be connected to start writer');
+  this.$startWrite();
+  return this.once('writable', cb);
+};
+
+//returns boolean - false indicates an error condition
+//e.g. a failure to consume input
+PQ.prototype.consumeInput = function() {
+  return this.$consumeInput();
+};
+
+//returns true if PQ#getResult would cause
+//the process to block waiting on results
+//false indicates PQ#getResult can be called
+//with an assurance of not blocking
+PQ.prototype.isBusy = function() {
+  return this.$isBusy();
+};
+
+//toggles the socket blocking on outgoing writes
+PQ.prototype.setNonBlocking = function(truthy) {
+  return this.$setNonBlocking(truthy ? 1 : 0);
+};
+
+//returns true if the connection is non-blocking on writes, otherwise false
+//note: connection is always non-blocking on reads if using the send* methods
+PQ.prototype.isNonBlocking = function() {
+  return this.$isNonBlocking();
+};
+
+//returns 1 if socket is not write-ready
+//returns 0 if all data flushed to socket
+//returns -1 if there is an error
+PQ.prototype.flush = function() {
+  return this.$flush();
+};
+
+//escapes a literal and returns the escaped string
+//I'm not 100% sure this doesn't do any I/O...need to check that
+PQ.prototype.escapeLiteral = function(input) {
+  if(!input) return input;
+  return this.$escapeLiteral(input);
+};
+
+PQ.prototype.escapeIdentifier = function(input) {
+  if(!input) return input;
+  return this.$escapeIdentifier(input);
+};
+
+//Checks for any notifications which may have arrivied
+//and returns them as a javascript object: {relname: 'string', extra: 'string', be_pid: int}
+//if there are no pending notifications this returns undefined
+PQ.prototype.notifies = function() {
+  return this.$notifies();
+};
+
+//Sends a buffer of binary data to the server
+//returns 1 if the command was sent successfully
+//returns 0 if the command would block (use PQ#writable here if so)
+//returns -1 if there was an error
+PQ.prototype.putCopyData = function(buffer) {
+  assert(buffer instanceof Buffer);
+  return this.$putCopyData(buffer);
+};
+
+//Sends a command to 'finish' the copy
+//if an error message is passed, it will be sent to the
+//backend and signal a request to cancel the copy in
+//returns 1 if sent succesfully
+//returns 0 if the command would block
+//returns -1 if there was an error
+PQ.prototype.putCopyEnd = function(errorMessage) {
+  if(errorMessage) {
+    return this.$putCopyEnd(errorMessage);
+  }
+  return this.$putCopyEnd();
+};
+
+//Gets a buffer of data from a copy out command
+//if async is passed as true it will not block waiting
+//for the result, otherwise this will BLOCK for a result.
+//returns a buffer if successful
+//returns 0 if copy is still in process (async only)
+//returns -1 if the copy is done
+//returns -2 if there was an error
+PQ.prototype.getCopyData = function(async) {
+  return this.$getCopyData(!!async);
+};
+
+PQ.prototype.cancel = function() {
+  return this.$cancel();
+};
+
+/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(80)(module), "/"))
+
+/***/ }),
 /* 80 */
 /***/ (function(module, exports) {
 
@@ -257,41 +11581,7776 @@ module.exports = function(module) {
 
 
 /***/ }),
-/* 81 */,
-/* 82 */,
-/* 83 */,
-/* 84 */,
-/* 85 */,
-/* 86 */,
-/* 87 */,
-/* 88 */,
-/* 89 */,
-/* 90 */,
-/* 91 */,
-/* 92 */,
-/* 93 */,
-/* 94 */,
-/* 95 */,
-/* 96 */,
-/* 97 */,
-/* 98 */,
-/* 99 */,
-/* 100 */,
-/* 101 */,
-/* 102 */,
-/* 103 */,
-/* 104 */,
-/* 105 */,
-/* 106 */,
-/* 107 */,
-/* 108 */,
-/* 109 */,
-/* 110 */,
-/* 111 */,
-/* 112 */,
-/* 113 */,
-/* 114 */,
-/* 115 */,
+/* 81 */
+/***/ (function(module, exports, __webpack_require__) {
+
+/* WEBPACK VAR INJECTION */(function(__filename) {
+/**
+ * Module dependencies.
+ */
+
+var fs = __webpack_require__(15)
+  , path = __webpack_require__(4)
+  , join = path.join
+  , dirname = path.dirname
+  , exists = fs.existsSync || path.existsSync
+  , defaults = {
+        arrow: process.env.NODE_BINDINGS_ARROW || ' → '
+      , compiled: process.env.NODE_BINDINGS_COMPILED_DIR || 'compiled'
+      , platform: process.platform
+      , arch: process.arch
+      , version: process.versions.node
+      , bindings: 'bindings.node'
+      , try: [
+          // node-gyp's linked version in the "build" dir
+          [ 'module_root', 'build', 'bindings' ]
+          // node-waf and gyp_addon (a.k.a node-gyp)
+        , [ 'module_root', 'build', 'Debug', 'bindings' ]
+        , [ 'module_root', 'build', 'Release', 'bindings' ]
+          // Debug files, for development (legacy behavior, remove for node v0.9)
+        , [ 'module_root', 'out', 'Debug', 'bindings' ]
+        , [ 'module_root', 'Debug', 'bindings' ]
+          // Release files, but manually compiled (legacy behavior, remove for node v0.9)
+        , [ 'module_root', 'out', 'Release', 'bindings' ]
+        , [ 'module_root', 'Release', 'bindings' ]
+          // Legacy from node-waf, node <= 0.4.x
+        , [ 'module_root', 'build', 'default', 'bindings' ]
+          // Production "Release" buildtype binary (meh...)
+        , [ 'module_root', 'compiled', 'version', 'platform', 'arch', 'bindings' ]
+        ]
+    }
+
+/**
+ * The main `bindings()` function loads the compiled bindings for a given module.
+ * It uses V8's Error API to determine the parent filename that this function is
+ * being invoked from, which is then used to find the root directory.
+ */
+
+function bindings (opts) {
+
+  // Argument surgery
+  if (typeof opts == 'string') {
+    opts = { bindings: opts }
+  } else if (!opts) {
+    opts = {}
+  }
+  opts.__proto__ = defaults
+
+  // Get the module root
+  if (!opts.module_root) {
+    opts.module_root = exports.getRoot(exports.getFileName())
+  }
+
+  // Ensure the given bindings name ends with .node
+  if (path.extname(opts.bindings) != '.node') {
+    opts.bindings += '.node'
+  }
+
+  var tries = []
+    , i = 0
+    , l = opts.try.length
+    , n
+    , b
+    , err
+
+  for (; i<l; i++) {
+    n = join.apply(null, opts.try[i].map(function (p) {
+      return opts[p] || p
+    }))
+    tries.push(n)
+    try {
+      b = opts.path ? /*require.resolve*/(!(function webpackMissingModule() { var e = new Error("Cannot find module \".\""); e.code = 'MODULE_NOT_FOUND'; throw e; }())) : !(function webpackMissingModule() { var e = new Error("Cannot find module \".\""); e.code = 'MODULE_NOT_FOUND'; throw e; }())
+      if (!opts.path) {
+        b.path = n
+      }
+      return b
+    } catch (e) {
+      if (!/not find/i.test(e.message)) {
+        throw e
+      }
+    }
+  }
+
+  err = new Error('Could not locate the bindings file. Tried:\n'
+    + tries.map(function (a) { return opts.arrow + a }).join('\n'))
+  err.tries = tries
+  throw err
+}
+module.exports = exports = bindings
+
+
+/**
+ * Gets the filename of the JavaScript file that invokes this function.
+ * Used to help find the root directory of a module.
+ * Optionally accepts an filename argument to skip when searching for the invoking filename
+ */
+
+exports.getFileName = function getFileName (calling_file) {
+  var origPST = Error.prepareStackTrace
+    , origSTL = Error.stackTraceLimit
+    , dummy = {}
+    , fileName
+
+  Error.stackTraceLimit = 10
+
+  Error.prepareStackTrace = function (e, st) {
+    for (var i=0, l=st.length; i<l; i++) {
+      fileName = st[i].getFileName()
+      if (fileName !== __filename) {
+        if (calling_file) {
+            if (fileName !== calling_file) {
+              return
+            }
+        } else {
+          return
+        }
+      }
+    }
+  }
+
+  // run the 'prepareStackTrace' function above
+  Error.captureStackTrace(dummy)
+  dummy.stack
+
+  // cleanup
+  Error.prepareStackTrace = origPST
+  Error.stackTraceLimit = origSTL
+
+  return fileName
+}
+
+/**
+ * Gets the root directory of a module, given an arbitrary filename
+ * somewhere in the module tree. The "root directory" is the directory
+ * containing the `package.json` file.
+ *
+ *   In:  /home/nate/node-native-module/lib/index.js
+ *   Out: /home/nate/node-native-module
+ */
+
+exports.getRoot = function getRoot (file) {
+  var dir = dirname(file)
+    , prev
+  while (true) {
+    if (dir === '.') {
+      // Avoids an infinite loop in rare cases, like the REPL
+      dir = process.cwd()
+    }
+    if (exists(join(dir, 'package.json')) || exists(join(dir, 'node_modules'))) {
+      // Found the 'package.json' file or 'node_modules' dir; we're done
+      return dir
+    }
+    if (prev === dir) {
+      // Got to the top
+      throw new Error('Could not find module root given file: "' + file
+                    + '". Do you have a `package.json` file? ')
+    }
+    // Try the parent dir next
+    prev = dir
+    dir = join(dir, '..')
+  }
+}
+
+/* WEBPACK VAR INJECTION */}.call(exports, "/index.js"))
+
+/***/ }),
+/* 82 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+class Result {
+  constructor (types, arrayMode) {
+    this._types = types
+    this._arrayMode = arrayMode
+
+    this.command = undefined
+    this.rowCount = undefined
+    this.fields = []
+    this.rows = []
+  }
+
+  consumeCommand (pq) {
+    this.command = pq.cmdStatus().split(' ')[0]
+    this.rowCount = parseInt(pq.cmdTuples(), 10)
+  }
+
+  consumeFields (pq) {
+    const nfields = pq.nfields()
+    for (var x = 0; x < nfields; x++) {
+      this.fields.push({
+        name: pq.fname(x),
+        dataTypeID: pq.ftype(x)
+      })
+    }
+  }
+
+  consumeRows (pq) {
+    const tupleCount = pq.ntuples()
+    for (var i = 0; i < tupleCount; i++) {
+      const row = this._arrayMode ? this.consumeRowAsArray(pq, i) : this.consumeRowAsObject(pq, i)
+      this.rows.push(row)
+    }
+  }
+
+  consumeRowAsObject (pq, rowIndex) {
+    const row = { }
+    for (var j = 0; j < this.fields.length; j++) {
+      const value = this.readValue(pq, rowIndex, j)
+      row[this.fields[j].name] = value
+    }
+    return row
+  }
+
+  consumeRowAsArray (pq, rowIndex) {
+    const row = []
+    for (var j = 0; j < this.fields.length; j++) {
+      const value = this.readValue(pq, rowIndex, j)
+      row.push(value)
+    }
+    return row
+  }
+
+  readValue (pq, rowIndex, colIndex) {
+    var rawValue = pq.getvalue(rowIndex, colIndex)
+    if (rawValue === '') {
+      if (pq.getisnull(rowIndex, colIndex)) {
+        return null
+      }
+    }
+    const dataTypeId = this.fields[colIndex].dataTypeID
+    return this._types.getTypeParser(dataTypeId)(rawValue)
+  }
+}
+
+function buildResult (pq, types, arrayMode) {
+  const result = new Result(types, arrayMode)
+  result.consumeCommand(pq)
+  result.consumeFields(pq)
+  result.consumeRows(pq)
+
+  return result
+}
+
+module.exports = buildResult
+
+
+/***/ }),
+/* 83 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var Duplex = __webpack_require__(9).Duplex
+var Writable = __webpack_require__(9).Writable
+var util = __webpack_require__(1)
+
+var CopyStream = module.exports = function (pq, options) {
+  Duplex.call(this, options)
+  this.pq = pq
+  this._reading = false
+}
+
+util.inherits(CopyStream, Duplex)
+
+// writer methods
+CopyStream.prototype._write = function (chunk, encoding, cb) {
+  var result = this.pq.putCopyData(chunk)
+
+  // sent successfully
+  if (result === 1) return cb()
+
+  // error
+  if (result === -1) return cb(new Error(this.pq.errorMessage()))
+
+  // command would block. wait for writable and call again.
+  var self = this
+  this.pq.writable(function () {
+    self._write(chunk, encoding, cb)
+  })
+}
+
+CopyStream.prototype.end = function () {
+  var args = Array.prototype.slice.call(arguments, 0)
+  var self = this
+
+  var callback = args.pop()
+
+  if (args.length) {
+    this.write(args[0])
+  }
+  var result = this.pq.putCopyEnd()
+
+  // sent successfully
+  if (result === 1) {
+    // consume our results and then call 'end' on the
+    // "parent" writable class so we can emit 'finish' and
+    // all that jazz
+    return consumeResults(this.pq, function (err, res) {
+      Writable.prototype.end.call(self)
+
+      // handle possible passing of callback to end method
+      if (callback) {
+        callback(err)
+      }
+    })
+  }
+
+  // error
+  if (result === -1) {
+    var err = new Error(this.pq.errorMessage())
+    return this.emit('error', err)
+  }
+
+  // command would block. wait for writable and call end again
+  // don't pass any buffers to end on the second call because
+  // we already sent them to possible this.write the first time
+  // we called end
+  return this.pq.writable(function () {
+    return self.end.apply(self, callback)
+  })
+}
+
+// reader methods
+CopyStream.prototype._consumeBuffer = function (cb) {
+  var result = this.pq.getCopyData(true)
+  if (result instanceof Buffer) {
+    return setImmediate(function () {
+      cb(null, result)
+    })
+  }
+  if (result === -1) {
+    // end of stream
+    return cb(null, null)
+  }
+  if (result === 0) {
+    var self = this
+    this.pq.once('readable', function () {
+      self.pq.stopReader()
+      self.pq.consumeInput()
+      self._consumeBuffer(cb)
+    })
+    return this.pq.startReader()
+  }
+  cb(new Error('Unrecognized read status: ' + result))
+}
+
+CopyStream.prototype._read = function (size) {
+  if (this._reading) return
+  this._reading = true
+  // console.log('read begin');
+  var self = this
+  this._consumeBuffer(function (err, buffer) {
+    self._reading = false
+    if (err) {
+      return self.emit('error', err)
+    }
+    if (buffer === false) {
+      // nothing to read for now, return
+      return
+    }
+    self.push(buffer)
+  })
+}
+
+var consumeResults = function (pq, cb) {
+  var cleanup = function () {
+    pq.removeListener('readable', onReadable)
+    pq.stopReader()
+  }
+
+  var readError = function (message) {
+    cleanup()
+    return cb(new Error(message || pq.errorMessage()))
+  }
+
+  var onReadable = function () {
+    // read waiting data from the socket
+    // e.g. clear the pending 'select'
+    if (!pq.consumeInput()) {
+      return readError()
+    }
+
+    // check if there is still outstanding data
+    // if so, wait for it all to come in
+    if (pq.isBusy()) {
+      return
+    }
+
+    // load our result object
+    pq.getResult()
+
+    // "read until results return null"
+    // or in our case ensure we only have one result
+    if (pq.getResult() && pq.resultStatus() !== 'PGRES_COPY_OUT') {
+      return readError('Only one result at a time is accepted')
+    }
+
+    if (pq.resultStatus() === 'PGRES_FATAL_ERROR') {
+      return readError()
+    }
+
+    cleanup()
+    return cb(null)
+  }
+  pq.on('readable', onReadable)
+  pq.startReader()
+}
+
+
+/***/ }),
+/* 84 */
+/***/ (function(module, exports) {
+
+module.exports = {"_from":"pg-native","_id":"pg-native@3.0.0","_inBundle":false,"_integrity":"sha512-qZZyywXJ8O4lbiIN7mn6vXIow1fd3QZFqzRe+uET/SZIXvCa3HBooXQA4ZU8EQX8Ae6SmaYtDGLp5DwU+8vrfg==","_location":"/pg-native","_phantomChildren":{"core-util-is":"1.0.2","inherits":"2.0.3"},"_requested":{"type":"tag","registry":true,"raw":"pg-native","name":"pg-native","escapedName":"pg-native","rawSpec":"","saveSpec":null,"fetchSpec":"latest"},"_requiredBy":["#USER","/"],"_resolved":"https://registry.npmjs.org/pg-native/-/pg-native-3.0.0.tgz","_shasum":"20c64e651e20b28f5c060b3823522d1c8c4429c3","_spec":"pg-native","_where":"/home/anton/projects/technopark/js-tp-db","author":{"name":"Brian M. Carlson"},"bugs":{"url":"https://github.com/brianc/node-pg-native/issues"},"bundleDependencies":false,"dependencies":{"libpq":"^1.7.0","pg-types":"^1.12.1","readable-stream":"1.0.31"},"deprecated":false,"description":"A slightly nicer interface to Postgres over node-libpq","devDependencies":{"async":"^0.9.0","concat-stream":"^1.4.6","eslint":"4.2.0","eslint-config-standard":"10.2.1","eslint-plugin-import":"2.7.0","eslint-plugin-node":"5.1.0","eslint-plugin-promise":"3.5.0","eslint-plugin-standard":"3.0.1","generic-pool":"^2.1.1","lodash":"^2.4.1","mocha":"3.4.2","okay":"^0.3.0","pg":"*","semver":"^4.1.0"},"homepage":"https://github.com/brianc/node-pg-native","keywords":["postgres","pg","libpq"],"license":"MIT","main":"index.js","name":"pg-native","repository":{"type":"git","url":"git://github.com/brianc/node-pg-native.git"},"scripts":{"test":"mocha && eslint ."},"version":"3.0.0"}
+
+/***/ }),
+/* 85 */
+/***/ (function(module, exports, __webpack_require__) {
+
+var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_RESULT__;// export the class if we are in a Node-like system.
+if (typeof module === 'object' && module.exports === exports)
+  exports = module.exports = SemVer;
+
+// The debug function is excluded entirely from the minified version.
+/* nomin */ var debug;
+/* nomin */ if (typeof process === 'object' &&
+    /* nomin */ process.env &&
+    /* nomin */ process.env.NODE_DEBUG &&
+    /* nomin */ /\bsemver\b/i.test(process.env.NODE_DEBUG))
+  /* nomin */ debug = function() {
+    /* nomin */ var args = Array.prototype.slice.call(arguments, 0);
+    /* nomin */ args.unshift('SEMVER');
+    /* nomin */ console.log.apply(console, args);
+    /* nomin */ };
+/* nomin */ else
+  /* nomin */ debug = function() {};
+
+// Note: this is the semver.org version of the spec that it implements
+// Not necessarily the package version of this code.
+exports.SEMVER_SPEC_VERSION = '2.0.0';
+
+var MAX_LENGTH = 256;
+var MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER || 9007199254740991;
+
+// The actual regexps go on exports.re
+var re = exports.re = [];
+var src = exports.src = [];
+var R = 0;
+
+// The following Regular Expressions can be used for tokenizing,
+// validating, and parsing SemVer version strings.
+
+// ## Numeric Identifier
+// A single `0`, or a non-zero digit followed by zero or more digits.
+
+var NUMERICIDENTIFIER = R++;
+src[NUMERICIDENTIFIER] = '0|[1-9]\\d*';
+var NUMERICIDENTIFIERLOOSE = R++;
+src[NUMERICIDENTIFIERLOOSE] = '[0-9]+';
+
+
+// ## Non-numeric Identifier
+// Zero or more digits, followed by a letter or hyphen, and then zero or
+// more letters, digits, or hyphens.
+
+var NONNUMERICIDENTIFIER = R++;
+src[NONNUMERICIDENTIFIER] = '\\d*[a-zA-Z-][a-zA-Z0-9-]*';
+
+
+// ## Main Version
+// Three dot-separated numeric identifiers.
+
+var MAINVERSION = R++;
+src[MAINVERSION] = '(' + src[NUMERICIDENTIFIER] + ')\\.' +
+                   '(' + src[NUMERICIDENTIFIER] + ')\\.' +
+                   '(' + src[NUMERICIDENTIFIER] + ')';
+
+var MAINVERSIONLOOSE = R++;
+src[MAINVERSIONLOOSE] = '(' + src[NUMERICIDENTIFIERLOOSE] + ')\\.' +
+                        '(' + src[NUMERICIDENTIFIERLOOSE] + ')\\.' +
+                        '(' + src[NUMERICIDENTIFIERLOOSE] + ')';
+
+// ## Pre-release Version Identifier
+// A numeric identifier, or a non-numeric identifier.
+
+var PRERELEASEIDENTIFIER = R++;
+src[PRERELEASEIDENTIFIER] = '(?:' + src[NUMERICIDENTIFIER] +
+                            '|' + src[NONNUMERICIDENTIFIER] + ')';
+
+var PRERELEASEIDENTIFIERLOOSE = R++;
+src[PRERELEASEIDENTIFIERLOOSE] = '(?:' + src[NUMERICIDENTIFIERLOOSE] +
+                                 '|' + src[NONNUMERICIDENTIFIER] + ')';
+
+
+// ## Pre-release Version
+// Hyphen, followed by one or more dot-separated pre-release version
+// identifiers.
+
+var PRERELEASE = R++;
+src[PRERELEASE] = '(?:-(' + src[PRERELEASEIDENTIFIER] +
+                  '(?:\\.' + src[PRERELEASEIDENTIFIER] + ')*))';
+
+var PRERELEASELOOSE = R++;
+src[PRERELEASELOOSE] = '(?:-?(' + src[PRERELEASEIDENTIFIERLOOSE] +
+                       '(?:\\.' + src[PRERELEASEIDENTIFIERLOOSE] + ')*))';
+
+// ## Build Metadata Identifier
+// Any combination of digits, letters, or hyphens.
+
+var BUILDIDENTIFIER = R++;
+src[BUILDIDENTIFIER] = '[0-9A-Za-z-]+';
+
+// ## Build Metadata
+// Plus sign, followed by one or more period-separated build metadata
+// identifiers.
+
+var BUILD = R++;
+src[BUILD] = '(?:\\+(' + src[BUILDIDENTIFIER] +
+             '(?:\\.' + src[BUILDIDENTIFIER] + ')*))';
+
+
+// ## Full Version String
+// A main version, followed optionally by a pre-release version and
+// build metadata.
+
+// Note that the only major, minor, patch, and pre-release sections of
+// the version string are capturing groups.  The build metadata is not a
+// capturing group, because it should not ever be used in version
+// comparison.
+
+var FULL = R++;
+var FULLPLAIN = 'v?' + src[MAINVERSION] +
+                src[PRERELEASE] + '?' +
+                src[BUILD] + '?';
+
+src[FULL] = '^' + FULLPLAIN + '$';
+
+// like full, but allows v1.2.3 and =1.2.3, which people do sometimes.
+// also, 1.0.0alpha1 (prerelease without the hyphen) which is pretty
+// common in the npm registry.
+var LOOSEPLAIN = '[v=\\s]*' + src[MAINVERSIONLOOSE] +
+                 src[PRERELEASELOOSE] + '?' +
+                 src[BUILD] + '?';
+
+var LOOSE = R++;
+src[LOOSE] = '^' + LOOSEPLAIN + '$';
+
+var GTLT = R++;
+src[GTLT] = '((?:<|>)?=?)';
+
+// Something like "2.*" or "1.2.x".
+// Note that "x.x" is a valid xRange identifer, meaning "any version"
+// Only the first item is strictly required.
+var XRANGEIDENTIFIERLOOSE = R++;
+src[XRANGEIDENTIFIERLOOSE] = src[NUMERICIDENTIFIERLOOSE] + '|x|X|\\*';
+var XRANGEIDENTIFIER = R++;
+src[XRANGEIDENTIFIER] = src[NUMERICIDENTIFIER] + '|x|X|\\*';
+
+var XRANGEPLAIN = R++;
+src[XRANGEPLAIN] = '[v=\\s]*(' + src[XRANGEIDENTIFIER] + ')' +
+                   '(?:\\.(' + src[XRANGEIDENTIFIER] + ')' +
+                   '(?:\\.(' + src[XRANGEIDENTIFIER] + ')' +
+                   '(?:' + src[PRERELEASE] + ')?' +
+                   src[BUILD] + '?' +
+                   ')?)?';
+
+var XRANGEPLAINLOOSE = R++;
+src[XRANGEPLAINLOOSE] = '[v=\\s]*(' + src[XRANGEIDENTIFIERLOOSE] + ')' +
+                        '(?:\\.(' + src[XRANGEIDENTIFIERLOOSE] + ')' +
+                        '(?:\\.(' + src[XRANGEIDENTIFIERLOOSE] + ')' +
+                        '(?:' + src[PRERELEASELOOSE] + ')?' +
+                        src[BUILD] + '?' +
+                        ')?)?';
+
+var XRANGE = R++;
+src[XRANGE] = '^' + src[GTLT] + '\\s*' + src[XRANGEPLAIN] + '$';
+var XRANGELOOSE = R++;
+src[XRANGELOOSE] = '^' + src[GTLT] + '\\s*' + src[XRANGEPLAINLOOSE] + '$';
+
+// Tilde ranges.
+// Meaning is "reasonably at or greater than"
+var LONETILDE = R++;
+src[LONETILDE] = '(?:~>?)';
+
+var TILDETRIM = R++;
+src[TILDETRIM] = '(\\s*)' + src[LONETILDE] + '\\s+';
+re[TILDETRIM] = new RegExp(src[TILDETRIM], 'g');
+var tildeTrimReplace = '$1~';
+
+var TILDE = R++;
+src[TILDE] = '^' + src[LONETILDE] + src[XRANGEPLAIN] + '$';
+var TILDELOOSE = R++;
+src[TILDELOOSE] = '^' + src[LONETILDE] + src[XRANGEPLAINLOOSE] + '$';
+
+// Caret ranges.
+// Meaning is "at least and backwards compatible with"
+var LONECARET = R++;
+src[LONECARET] = '(?:\\^)';
+
+var CARETTRIM = R++;
+src[CARETTRIM] = '(\\s*)' + src[LONECARET] + '\\s+';
+re[CARETTRIM] = new RegExp(src[CARETTRIM], 'g');
+var caretTrimReplace = '$1^';
+
+var CARET = R++;
+src[CARET] = '^' + src[LONECARET] + src[XRANGEPLAIN] + '$';
+var CARETLOOSE = R++;
+src[CARETLOOSE] = '^' + src[LONECARET] + src[XRANGEPLAINLOOSE] + '$';
+
+// A simple gt/lt/eq thing, or just "" to indicate "any version"
+var COMPARATORLOOSE = R++;
+src[COMPARATORLOOSE] = '^' + src[GTLT] + '\\s*(' + LOOSEPLAIN + ')$|^$';
+var COMPARATOR = R++;
+src[COMPARATOR] = '^' + src[GTLT] + '\\s*(' + FULLPLAIN + ')$|^$';
+
+
+// An expression to strip any whitespace between the gtlt and the thing
+// it modifies, so that `> 1.2.3` ==> `>1.2.3`
+var COMPARATORTRIM = R++;
+src[COMPARATORTRIM] = '(\\s*)' + src[GTLT] +
+                      '\\s*(' + LOOSEPLAIN + '|' + src[XRANGEPLAIN] + ')';
+
+// this one has to use the /g flag
+re[COMPARATORTRIM] = new RegExp(src[COMPARATORTRIM], 'g');
+var comparatorTrimReplace = '$1$2$3';
+
+
+// Something like `1.2.3 - 1.2.4`
+// Note that these all use the loose form, because they'll be
+// checked against either the strict or loose comparator form
+// later.
+var HYPHENRANGE = R++;
+src[HYPHENRANGE] = '^\\s*(' + src[XRANGEPLAIN] + ')' +
+                   '\\s+-\\s+' +
+                   '(' + src[XRANGEPLAIN] + ')' +
+                   '\\s*$';
+
+var HYPHENRANGELOOSE = R++;
+src[HYPHENRANGELOOSE] = '^\\s*(' + src[XRANGEPLAINLOOSE] + ')' +
+                        '\\s+-\\s+' +
+                        '(' + src[XRANGEPLAINLOOSE] + ')' +
+                        '\\s*$';
+
+// Star ranges basically just allow anything at all.
+var STAR = R++;
+src[STAR] = '(<|>)?=?\\s*\\*';
+
+// Compile to actual regexp objects.
+// All are flag-free, unless they were created above with a flag.
+for (var i = 0; i < R; i++) {
+  debug(i, src[i]);
+  if (!re[i])
+    re[i] = new RegExp(src[i]);
+}
+
+exports.parse = parse;
+function parse(version, loose) {
+  if (version.length > MAX_LENGTH)
+    return null;
+
+  var r = loose ? re[LOOSE] : re[FULL];
+  if (!r.test(version))
+    return null;
+
+  try {
+    return new SemVer(version, loose);
+  } catch (er) {
+    return null;
+  }
+}
+
+exports.valid = valid;
+function valid(version, loose) {
+  var v = parse(version, loose);
+  return v ? v.version : null;
+}
+
+
+exports.clean = clean;
+function clean(version, loose) {
+  var s = parse(version.trim().replace(/^[=v]+/, ''), loose);
+  return s ? s.version : null;
+}
+
+exports.SemVer = SemVer;
+
+function SemVer(version, loose) {
+  if (version instanceof SemVer) {
+    if (version.loose === loose)
+      return version;
+    else
+      version = version.version;
+  } else if (typeof version !== 'string') {
+    throw new TypeError('Invalid Version: ' + version);
+  }
+
+  if (version.length > MAX_LENGTH)
+    throw new TypeError('version is longer than ' + MAX_LENGTH + ' characters')
+
+  if (!(this instanceof SemVer))
+    return new SemVer(version, loose);
+
+  debug('SemVer', version, loose);
+  this.loose = loose;
+  var m = version.trim().match(loose ? re[LOOSE] : re[FULL]);
+
+  if (!m)
+    throw new TypeError('Invalid Version: ' + version);
+
+  this.raw = version;
+
+  // these are actually numbers
+  this.major = +m[1];
+  this.minor = +m[2];
+  this.patch = +m[3];
+
+  if (this.major > MAX_SAFE_INTEGER || this.major < 0)
+    throw new TypeError('Invalid major version')
+
+  if (this.minor > MAX_SAFE_INTEGER || this.minor < 0)
+    throw new TypeError('Invalid minor version')
+
+  if (this.patch > MAX_SAFE_INTEGER || this.patch < 0)
+    throw new TypeError('Invalid patch version')
+
+  // numberify any prerelease numeric ids
+  if (!m[4])
+    this.prerelease = [];
+  else
+    this.prerelease = m[4].split('.').map(function(id) {
+      return (/^[0-9]+$/.test(id)) ? +id : id;
+    });
+
+  this.build = m[5] ? m[5].split('.') : [];
+  this.format();
+}
+
+SemVer.prototype.format = function() {
+  this.version = this.major + '.' + this.minor + '.' + this.patch;
+  if (this.prerelease.length)
+    this.version += '-' + this.prerelease.join('.');
+  return this.version;
+};
+
+SemVer.prototype.inspect = function() {
+  return '<SemVer "' + this + '">';
+};
+
+SemVer.prototype.toString = function() {
+  return this.version;
+};
+
+SemVer.prototype.compare = function(other) {
+  debug('SemVer.compare', this.version, this.loose, other);
+  if (!(other instanceof SemVer))
+    other = new SemVer(other, this.loose);
+
+  return this.compareMain(other) || this.comparePre(other);
+};
+
+SemVer.prototype.compareMain = function(other) {
+  if (!(other instanceof SemVer))
+    other = new SemVer(other, this.loose);
+
+  return compareIdentifiers(this.major, other.major) ||
+         compareIdentifiers(this.minor, other.minor) ||
+         compareIdentifiers(this.patch, other.patch);
+};
+
+SemVer.prototype.comparePre = function(other) {
+  if (!(other instanceof SemVer))
+    other = new SemVer(other, this.loose);
+
+  // NOT having a prerelease is > having one
+  if (this.prerelease.length && !other.prerelease.length)
+    return -1;
+  else if (!this.prerelease.length && other.prerelease.length)
+    return 1;
+  else if (!this.prerelease.length && !other.prerelease.length)
+    return 0;
+
+  var i = 0;
+  do {
+    var a = this.prerelease[i];
+    var b = other.prerelease[i];
+    debug('prerelease compare', i, a, b);
+    if (a === undefined && b === undefined)
+      return 0;
+    else if (b === undefined)
+      return 1;
+    else if (a === undefined)
+      return -1;
+    else if (a === b)
+      continue;
+    else
+      return compareIdentifiers(a, b);
+  } while (++i);
+};
+
+// preminor will bump the version up to the next minor release, and immediately
+// down to pre-release. premajor and prepatch work the same way.
+SemVer.prototype.inc = function(release, identifier) {
+  switch (release) {
+    case 'premajor':
+      this.prerelease.length = 0;
+      this.patch = 0;
+      this.minor = 0;
+      this.major++;
+      this.inc('pre', identifier);
+      break;
+    case 'preminor':
+      this.prerelease.length = 0;
+      this.patch = 0;
+      this.minor++;
+      this.inc('pre', identifier);
+      break;
+    case 'prepatch':
+      // If this is already a prerelease, it will bump to the next version
+      // drop any prereleases that might already exist, since they are not
+      // relevant at this point.
+      this.prerelease.length = 0;
+      this.inc('patch', identifier);
+      this.inc('pre', identifier);
+      break;
+    // If the input is a non-prerelease version, this acts the same as
+    // prepatch.
+    case 'prerelease':
+      if (this.prerelease.length === 0)
+        this.inc('patch', identifier);
+      this.inc('pre', identifier);
+      break;
+
+    case 'major':
+      // If this is a pre-major version, bump up to the same major version.
+      // Otherwise increment major.
+      // 1.0.0-5 bumps to 1.0.0
+      // 1.1.0 bumps to 2.0.0
+      if (this.minor !== 0 || this.patch !== 0 || this.prerelease.length === 0)
+        this.major++;
+      this.minor = 0;
+      this.patch = 0;
+      this.prerelease = [];
+      break;
+    case 'minor':
+      // If this is a pre-minor version, bump up to the same minor version.
+      // Otherwise increment minor.
+      // 1.2.0-5 bumps to 1.2.0
+      // 1.2.1 bumps to 1.3.0
+      if (this.patch !== 0 || this.prerelease.length === 0)
+        this.minor++;
+      this.patch = 0;
+      this.prerelease = [];
+      break;
+    case 'patch':
+      // If this is not a pre-release version, it will increment the patch.
+      // If it is a pre-release it will bump up to the same patch version.
+      // 1.2.0-5 patches to 1.2.0
+      // 1.2.0 patches to 1.2.1
+      if (this.prerelease.length === 0)
+        this.patch++;
+      this.prerelease = [];
+      break;
+    // This probably shouldn't be used publicly.
+    // 1.0.0 "pre" would become 1.0.0-0 which is the wrong direction.
+    case 'pre':
+      if (this.prerelease.length === 0)
+        this.prerelease = [0];
+      else {
+        var i = this.prerelease.length;
+        while (--i >= 0) {
+          if (typeof this.prerelease[i] === 'number') {
+            this.prerelease[i]++;
+            i = -2;
+          }
+        }
+        if (i === -1) // didn't increment anything
+          this.prerelease.push(0);
+      }
+      if (identifier) {
+        // 1.2.0-beta.1 bumps to 1.2.0-beta.2,
+        // 1.2.0-beta.fooblz or 1.2.0-beta bumps to 1.2.0-beta.0
+        if (this.prerelease[0] === identifier) {
+          if (isNaN(this.prerelease[1]))
+            this.prerelease = [identifier, 0];
+        } else
+          this.prerelease = [identifier, 0];
+      }
+      break;
+
+    default:
+      throw new Error('invalid increment argument: ' + release);
+  }
+  this.format();
+  return this;
+};
+
+exports.inc = inc;
+function inc(version, release, loose, identifier) {
+  if (typeof(loose) === 'string') {
+    identifier = loose;
+    loose = undefined;
+  }
+
+  try {
+    return new SemVer(version, loose).inc(release, identifier).version;
+  } catch (er) {
+    return null;
+  }
+}
+
+exports.diff = diff;
+function diff(version1, version2) {
+  if (eq(version1, version2)) {
+    return null;
+  } else {
+    var v1 = parse(version1);
+    var v2 = parse(version2);
+    if (v1.prerelease.length || v2.prerelease.length) {
+      for (var key in v1) {
+        if (key === 'major' || key === 'minor' || key === 'patch') {
+          if (v1[key] !== v2[key]) {
+            return 'pre'+key;
+          }
+        }
+      }
+      return 'prerelease';
+    }
+    for (var key in v1) {
+      if (key === 'major' || key === 'minor' || key === 'patch') {
+        if (v1[key] !== v2[key]) {
+          return key;
+        }
+      }
+    }
+  }
+}
+
+exports.compareIdentifiers = compareIdentifiers;
+
+var numeric = /^[0-9]+$/;
+function compareIdentifiers(a, b) {
+  var anum = numeric.test(a);
+  var bnum = numeric.test(b);
+
+  if (anum && bnum) {
+    a = +a;
+    b = +b;
+  }
+
+  return (anum && !bnum) ? -1 :
+         (bnum && !anum) ? 1 :
+         a < b ? -1 :
+         a > b ? 1 :
+         0;
+}
+
+exports.rcompareIdentifiers = rcompareIdentifiers;
+function rcompareIdentifiers(a, b) {
+  return compareIdentifiers(b, a);
+}
+
+exports.major = major;
+function major(a, loose) {
+  return new SemVer(a, loose).major;
+}
+
+exports.minor = minor;
+function minor(a, loose) {
+  return new SemVer(a, loose).minor;
+}
+
+exports.patch = patch;
+function patch(a, loose) {
+  return new SemVer(a, loose).patch;
+}
+
+exports.compare = compare;
+function compare(a, b, loose) {
+  return new SemVer(a, loose).compare(b);
+}
+
+exports.compareLoose = compareLoose;
+function compareLoose(a, b) {
+  return compare(a, b, true);
+}
+
+exports.rcompare = rcompare;
+function rcompare(a, b, loose) {
+  return compare(b, a, loose);
+}
+
+exports.sort = sort;
+function sort(list, loose) {
+  return list.sort(function(a, b) {
+    return exports.compare(a, b, loose);
+  });
+}
+
+exports.rsort = rsort;
+function rsort(list, loose) {
+  return list.sort(function(a, b) {
+    return exports.rcompare(a, b, loose);
+  });
+}
+
+exports.gt = gt;
+function gt(a, b, loose) {
+  return compare(a, b, loose) > 0;
+}
+
+exports.lt = lt;
+function lt(a, b, loose) {
+  return compare(a, b, loose) < 0;
+}
+
+exports.eq = eq;
+function eq(a, b, loose) {
+  return compare(a, b, loose) === 0;
+}
+
+exports.neq = neq;
+function neq(a, b, loose) {
+  return compare(a, b, loose) !== 0;
+}
+
+exports.gte = gte;
+function gte(a, b, loose) {
+  return compare(a, b, loose) >= 0;
+}
+
+exports.lte = lte;
+function lte(a, b, loose) {
+  return compare(a, b, loose) <= 0;
+}
+
+exports.cmp = cmp;
+function cmp(a, op, b, loose) {
+  var ret;
+  switch (op) {
+    case '===':
+      if (typeof a === 'object') a = a.version;
+      if (typeof b === 'object') b = b.version;
+      ret = a === b;
+      break;
+    case '!==':
+      if (typeof a === 'object') a = a.version;
+      if (typeof b === 'object') b = b.version;
+      ret = a !== b;
+      break;
+    case '': case '=': case '==': ret = eq(a, b, loose); break;
+    case '!=': ret = neq(a, b, loose); break;
+    case '>': ret = gt(a, b, loose); break;
+    case '>=': ret = gte(a, b, loose); break;
+    case '<': ret = lt(a, b, loose); break;
+    case '<=': ret = lte(a, b, loose); break;
+    default: throw new TypeError('Invalid operator: ' + op);
+  }
+  return ret;
+}
+
+exports.Comparator = Comparator;
+function Comparator(comp, loose) {
+  if (comp instanceof Comparator) {
+    if (comp.loose === loose)
+      return comp;
+    else
+      comp = comp.value;
+  }
+
+  if (!(this instanceof Comparator))
+    return new Comparator(comp, loose);
+
+  debug('comparator', comp, loose);
+  this.loose = loose;
+  this.parse(comp);
+
+  if (this.semver === ANY)
+    this.value = '';
+  else
+    this.value = this.operator + this.semver.version;
+
+  debug('comp', this);
+}
+
+var ANY = {};
+Comparator.prototype.parse = function(comp) {
+  var r = this.loose ? re[COMPARATORLOOSE] : re[COMPARATOR];
+  var m = comp.match(r);
+
+  if (!m)
+    throw new TypeError('Invalid comparator: ' + comp);
+
+  this.operator = m[1];
+  if (this.operator === '=')
+    this.operator = '';
+
+  // if it literally is just '>' or '' then allow anything.
+  if (!m[2])
+    this.semver = ANY;
+  else
+    this.semver = new SemVer(m[2], this.loose);
+};
+
+Comparator.prototype.inspect = function() {
+  return '<SemVer Comparator "' + this + '">';
+};
+
+Comparator.prototype.toString = function() {
+  return this.value;
+};
+
+Comparator.prototype.test = function(version) {
+  debug('Comparator.test', version, this.loose);
+
+  if (this.semver === ANY)
+    return true;
+
+  if (typeof version === 'string')
+    version = new SemVer(version, this.loose);
+
+  return cmp(version, this.operator, this.semver, this.loose);
+};
+
+
+exports.Range = Range;
+function Range(range, loose) {
+  if ((range instanceof Range) && range.loose === loose)
+    return range;
+
+  if (!(this instanceof Range))
+    return new Range(range, loose);
+
+  this.loose = loose;
+
+  // First, split based on boolean or ||
+  this.raw = range;
+  this.set = range.split(/\s*\|\|\s*/).map(function(range) {
+    return this.parseRange(range.trim());
+  }, this).filter(function(c) {
+    // throw out any that are not relevant for whatever reason
+    return c.length;
+  });
+
+  if (!this.set.length) {
+    throw new TypeError('Invalid SemVer Range: ' + range);
+  }
+
+  this.format();
+}
+
+Range.prototype.inspect = function() {
+  return '<SemVer Range "' + this.range + '">';
+};
+
+Range.prototype.format = function() {
+  this.range = this.set.map(function(comps) {
+    return comps.join(' ').trim();
+  }).join('||').trim();
+  return this.range;
+};
+
+Range.prototype.toString = function() {
+  return this.range;
+};
+
+Range.prototype.parseRange = function(range) {
+  var loose = this.loose;
+  range = range.trim();
+  debug('range', range, loose);
+  // `1.2.3 - 1.2.4` => `>=1.2.3 <=1.2.4`
+  var hr = loose ? re[HYPHENRANGELOOSE] : re[HYPHENRANGE];
+  range = range.replace(hr, hyphenReplace);
+  debug('hyphen replace', range);
+  // `> 1.2.3 < 1.2.5` => `>1.2.3 <1.2.5`
+  range = range.replace(re[COMPARATORTRIM], comparatorTrimReplace);
+  debug('comparator trim', range, re[COMPARATORTRIM]);
+
+  // `~ 1.2.3` => `~1.2.3`
+  range = range.replace(re[TILDETRIM], tildeTrimReplace);
+
+  // `^ 1.2.3` => `^1.2.3`
+  range = range.replace(re[CARETTRIM], caretTrimReplace);
+
+  // normalize spaces
+  range = range.split(/\s+/).join(' ');
+
+  // At this point, the range is completely trimmed and
+  // ready to be split into comparators.
+
+  var compRe = loose ? re[COMPARATORLOOSE] : re[COMPARATOR];
+  var set = range.split(' ').map(function(comp) {
+    return parseComparator(comp, loose);
+  }).join(' ').split(/\s+/);
+  if (this.loose) {
+    // in loose mode, throw out any that are not valid comparators
+    set = set.filter(function(comp) {
+      return !!comp.match(compRe);
+    });
+  }
+  set = set.map(function(comp) {
+    return new Comparator(comp, loose);
+  });
+
+  return set;
+};
+
+// Mostly just for testing and legacy API reasons
+exports.toComparators = toComparators;
+function toComparators(range, loose) {
+  return new Range(range, loose).set.map(function(comp) {
+    return comp.map(function(c) {
+      return c.value;
+    }).join(' ').trim().split(' ');
+  });
+}
+
+// comprised of xranges, tildes, stars, and gtlt's at this point.
+// already replaced the hyphen ranges
+// turn into a set of JUST comparators.
+function parseComparator(comp, loose) {
+  debug('comp', comp);
+  comp = replaceCarets(comp, loose);
+  debug('caret', comp);
+  comp = replaceTildes(comp, loose);
+  debug('tildes', comp);
+  comp = replaceXRanges(comp, loose);
+  debug('xrange', comp);
+  comp = replaceStars(comp, loose);
+  debug('stars', comp);
+  return comp;
+}
+
+function isX(id) {
+  return !id || id.toLowerCase() === 'x' || id === '*';
+}
+
+// ~, ~> --> * (any, kinda silly)
+// ~2, ~2.x, ~2.x.x, ~>2, ~>2.x ~>2.x.x --> >=2.0.0 <3.0.0
+// ~2.0, ~2.0.x, ~>2.0, ~>2.0.x --> >=2.0.0 <2.1.0
+// ~1.2, ~1.2.x, ~>1.2, ~>1.2.x --> >=1.2.0 <1.3.0
+// ~1.2.3, ~>1.2.3 --> >=1.2.3 <1.3.0
+// ~1.2.0, ~>1.2.0 --> >=1.2.0 <1.3.0
+function replaceTildes(comp, loose) {
+  return comp.trim().split(/\s+/).map(function(comp) {
+    return replaceTilde(comp, loose);
+  }).join(' ');
+}
+
+function replaceTilde(comp, loose) {
+  var r = loose ? re[TILDELOOSE] : re[TILDE];
+  return comp.replace(r, function(_, M, m, p, pr) {
+    debug('tilde', comp, _, M, m, p, pr);
+    var ret;
+
+    if (isX(M))
+      ret = '';
+    else if (isX(m))
+      ret = '>=' + M + '.0.0 <' + (+M + 1) + '.0.0';
+    else if (isX(p))
+      // ~1.2 == >=1.2.0- <1.3.0-
+      ret = '>=' + M + '.' + m + '.0 <' + M + '.' + (+m + 1) + '.0';
+    else if (pr) {
+      debug('replaceTilde pr', pr);
+      if (pr.charAt(0) !== '-')
+        pr = '-' + pr;
+      ret = '>=' + M + '.' + m + '.' + p + pr +
+            ' <' + M + '.' + (+m + 1) + '.0';
+    } else
+      // ~1.2.3 == >=1.2.3 <1.3.0
+      ret = '>=' + M + '.' + m + '.' + p +
+            ' <' + M + '.' + (+m + 1) + '.0';
+
+    debug('tilde return', ret);
+    return ret;
+  });
+}
+
+// ^ --> * (any, kinda silly)
+// ^2, ^2.x, ^2.x.x --> >=2.0.0 <3.0.0
+// ^2.0, ^2.0.x --> >=2.0.0 <3.0.0
+// ^1.2, ^1.2.x --> >=1.2.0 <2.0.0
+// ^1.2.3 --> >=1.2.3 <2.0.0
+// ^1.2.0 --> >=1.2.0 <2.0.0
+function replaceCarets(comp, loose) {
+  return comp.trim().split(/\s+/).map(function(comp) {
+    return replaceCaret(comp, loose);
+  }).join(' ');
+}
+
+function replaceCaret(comp, loose) {
+  debug('caret', comp, loose);
+  var r = loose ? re[CARETLOOSE] : re[CARET];
+  return comp.replace(r, function(_, M, m, p, pr) {
+    debug('caret', comp, _, M, m, p, pr);
+    var ret;
+
+    if (isX(M))
+      ret = '';
+    else if (isX(m))
+      ret = '>=' + M + '.0.0 <' + (+M + 1) + '.0.0';
+    else if (isX(p)) {
+      if (M === '0')
+        ret = '>=' + M + '.' + m + '.0 <' + M + '.' + (+m + 1) + '.0';
+      else
+        ret = '>=' + M + '.' + m + '.0 <' + (+M + 1) + '.0.0';
+    } else if (pr) {
+      debug('replaceCaret pr', pr);
+      if (pr.charAt(0) !== '-')
+        pr = '-' + pr;
+      if (M === '0') {
+        if (m === '0')
+          ret = '>=' + M + '.' + m + '.' + p + pr +
+                ' <' + M + '.' + m + '.' + (+p + 1);
+        else
+          ret = '>=' + M + '.' + m + '.' + p + pr +
+                ' <' + M + '.' + (+m + 1) + '.0';
+      } else
+        ret = '>=' + M + '.' + m + '.' + p + pr +
+              ' <' + (+M + 1) + '.0.0';
+    } else {
+      debug('no pr');
+      if (M === '0') {
+        if (m === '0')
+          ret = '>=' + M + '.' + m + '.' + p +
+                ' <' + M + '.' + m + '.' + (+p + 1);
+        else
+          ret = '>=' + M + '.' + m + '.' + p +
+                ' <' + M + '.' + (+m + 1) + '.0';
+      } else
+        ret = '>=' + M + '.' + m + '.' + p +
+              ' <' + (+M + 1) + '.0.0';
+    }
+
+    debug('caret return', ret);
+    return ret;
+  });
+}
+
+function replaceXRanges(comp, loose) {
+  debug('replaceXRanges', comp, loose);
+  return comp.split(/\s+/).map(function(comp) {
+    return replaceXRange(comp, loose);
+  }).join(' ');
+}
+
+function replaceXRange(comp, loose) {
+  comp = comp.trim();
+  var r = loose ? re[XRANGELOOSE] : re[XRANGE];
+  return comp.replace(r, function(ret, gtlt, M, m, p, pr) {
+    debug('xRange', comp, ret, gtlt, M, m, p, pr);
+    var xM = isX(M);
+    var xm = xM || isX(m);
+    var xp = xm || isX(p);
+    var anyX = xp;
+
+    if (gtlt === '=' && anyX)
+      gtlt = '';
+
+    if (xM) {
+      if (gtlt === '>' || gtlt === '<') {
+        // nothing is allowed
+        ret = '<0.0.0';
+      } else {
+        // nothing is forbidden
+        ret = '*';
+      }
+    } else if (gtlt && anyX) {
+      // replace X with 0
+      if (xm)
+        m = 0;
+      if (xp)
+        p = 0;
+
+      if (gtlt === '>') {
+        // >1 => >=2.0.0
+        // >1.2 => >=1.3.0
+        // >1.2.3 => >= 1.2.4
+        gtlt = '>=';
+        if (xm) {
+          M = +M + 1;
+          m = 0;
+          p = 0;
+        } else if (xp) {
+          m = +m + 1;
+          p = 0;
+        }
+      } else if (gtlt === '<=') {
+        // <=0.7.x is actually <0.8.0, since any 0.7.x should
+        // pass.  Similarly, <=7.x is actually <8.0.0, etc.
+        gtlt = '<'
+        if (xm)
+          M = +M + 1
+        else
+          m = +m + 1
+      }
+
+      ret = gtlt + M + '.' + m + '.' + p;
+    } else if (xm) {
+      ret = '>=' + M + '.0.0 <' + (+M + 1) + '.0.0';
+    } else if (xp) {
+      ret = '>=' + M + '.' + m + '.0 <' + M + '.' + (+m + 1) + '.0';
+    }
+
+    debug('xRange return', ret);
+
+    return ret;
+  });
+}
+
+// Because * is AND-ed with everything else in the comparator,
+// and '' means "any version", just remove the *s entirely.
+function replaceStars(comp, loose) {
+  debug('replaceStars', comp, loose);
+  // Looseness is ignored here.  star is always as loose as it gets!
+  return comp.trim().replace(re[STAR], '');
+}
+
+// This function is passed to string.replace(re[HYPHENRANGE])
+// M, m, patch, prerelease, build
+// 1.2 - 3.4.5 => >=1.2.0 <=3.4.5
+// 1.2.3 - 3.4 => >=1.2.0 <3.5.0 Any 3.4.x will do
+// 1.2 - 3.4 => >=1.2.0 <3.5.0
+function hyphenReplace($0,
+                       from, fM, fm, fp, fpr, fb,
+                       to, tM, tm, tp, tpr, tb) {
+
+  if (isX(fM))
+    from = '';
+  else if (isX(fm))
+    from = '>=' + fM + '.0.0';
+  else if (isX(fp))
+    from = '>=' + fM + '.' + fm + '.0';
+  else
+    from = '>=' + from;
+
+  if (isX(tM))
+    to = '';
+  else if (isX(tm))
+    to = '<' + (+tM + 1) + '.0.0';
+  else if (isX(tp))
+    to = '<' + tM + '.' + (+tm + 1) + '.0';
+  else if (tpr)
+    to = '<=' + tM + '.' + tm + '.' + tp + '-' + tpr;
+  else
+    to = '<=' + to;
+
+  return (from + ' ' + to).trim();
+}
+
+
+// if ANY of the sets match ALL of its comparators, then pass
+Range.prototype.test = function(version) {
+  if (!version)
+    return false;
+
+  if (typeof version === 'string')
+    version = new SemVer(version, this.loose);
+
+  for (var i = 0; i < this.set.length; i++) {
+    if (testSet(this.set[i], version))
+      return true;
+  }
+  return false;
+};
+
+function testSet(set, version) {
+  for (var i = 0; i < set.length; i++) {
+    if (!set[i].test(version))
+      return false;
+  }
+
+  if (version.prerelease.length) {
+    // Find the set of versions that are allowed to have prereleases
+    // For example, ^1.2.3-pr.1 desugars to >=1.2.3-pr.1 <2.0.0
+    // That should allow `1.2.3-pr.2` to pass.
+    // However, `1.2.4-alpha.notready` should NOT be allowed,
+    // even though it's within the range set by the comparators.
+    for (var i = 0; i < set.length; i++) {
+      debug(set[i].semver);
+      if (set[i].semver === ANY)
+        return true;
+
+      if (set[i].semver.prerelease.length > 0) {
+        var allowed = set[i].semver;
+        if (allowed.major === version.major &&
+            allowed.minor === version.minor &&
+            allowed.patch === version.patch)
+          return true;
+      }
+    }
+
+    // Version has a -pre, but it's not one of the ones we like.
+    return false;
+  }
+
+  return true;
+}
+
+exports.satisfies = satisfies;
+function satisfies(version, range, loose) {
+  try {
+    range = new Range(range, loose);
+  } catch (er) {
+    return false;
+  }
+  return range.test(version);
+}
+
+exports.maxSatisfying = maxSatisfying;
+function maxSatisfying(versions, range, loose) {
+  return versions.filter(function(version) {
+    return satisfies(version, range, loose);
+  }).sort(function(a, b) {
+    return rcompare(a, b, loose);
+  })[0] || null;
+}
+
+exports.validRange = validRange;
+function validRange(range, loose) {
+  try {
+    // Return '*' instead of '' so that truthiness works.
+    // This will throw if it's invalid anyway
+    return new Range(range, loose).range || '*';
+  } catch (er) {
+    return null;
+  }
+}
+
+// Determine if version is less than all the versions possible in the range
+exports.ltr = ltr;
+function ltr(version, range, loose) {
+  return outside(version, range, '<', loose);
+}
+
+// Determine if version is greater than all the versions possible in the range.
+exports.gtr = gtr;
+function gtr(version, range, loose) {
+  return outside(version, range, '>', loose);
+}
+
+exports.outside = outside;
+function outside(version, range, hilo, loose) {
+  version = new SemVer(version, loose);
+  range = new Range(range, loose);
+
+  var gtfn, ltefn, ltfn, comp, ecomp;
+  switch (hilo) {
+    case '>':
+      gtfn = gt;
+      ltefn = lte;
+      ltfn = lt;
+      comp = '>';
+      ecomp = '>=';
+      break;
+    case '<':
+      gtfn = lt;
+      ltefn = gte;
+      ltfn = gt;
+      comp = '<';
+      ecomp = '<=';
+      break;
+    default:
+      throw new TypeError('Must provide a hilo val of "<" or ">"');
+  }
+
+  // If it satisifes the range it is not outside
+  if (satisfies(version, range, loose)) {
+    return false;
+  }
+
+  // From now on, variable terms are as if we're in "gtr" mode.
+  // but note that everything is flipped for the "ltr" function.
+
+  for (var i = 0; i < range.set.length; ++i) {
+    var comparators = range.set[i];
+
+    var high = null;
+    var low = null;
+
+    comparators.forEach(function(comparator) {
+      high = high || comparator;
+      low = low || comparator;
+      if (gtfn(comparator.semver, high.semver, loose)) {
+        high = comparator;
+      } else if (ltfn(comparator.semver, low.semver, loose)) {
+        low = comparator;
+      }
+    });
+
+    // If the edge version comparator has a operator then our version
+    // isn't outside it
+    if (high.operator === comp || high.operator === ecomp) {
+      return false;
+    }
+
+    // If the lowest version comparator has an operator and our version
+    // is less than it then it isn't higher than the range
+    if ((!low.operator || low.operator === comp) &&
+        ltefn(version, low.semver)) {
+      return false;
+    } else if (low.operator === ecomp && ltfn(version, low.semver)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Use the define() function if we're in AMD land
+if (true)
+  !(__WEBPACK_AMD_DEFINE_FACTORY__ = (exports),
+				__WEBPACK_AMD_DEFINE_RESULT__ = (typeof __WEBPACK_AMD_DEFINE_FACTORY__ === 'function' ?
+				(__WEBPACK_AMD_DEFINE_FACTORY__.call(exports, __webpack_require__, exports, module)) :
+				__WEBPACK_AMD_DEFINE_FACTORY__),
+				__WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__));
+
+
+/***/ }),
+/* 86 */
+/***/ (function(module, exports) {
+
+module.exports = {"_from":"pg@7.4.3","_id":"pg@7.4.3","_inBundle":false,"_integrity":"sha1-97b5P1NA7MJZavu5ShPj1rYJg0s=","_location":"/pg","_phantomChildren":{},"_requested":{"type":"version","registry":true,"raw":"pg@7.4.3","name":"pg","escapedName":"pg","rawSpec":"7.4.3","saveSpec":null,"fetchSpec":"7.4.3"},"_requiredBy":["/pg-promise"],"_resolved":"https://registry.npmjs.org/pg/-/pg-7.4.3.tgz","_shasum":"f7b6f93f5340ecc2596afbb94a13e3d6b609834b","_spec":"pg@7.4.3","_where":"/home/anton/projects/technopark/js-tp-db/node_modules/pg-promise","author":{"name":"Brian Carlson","email":"brian.m.carlson@gmail.com"},"bugs":{"url":"https://github.com/brianc/node-postgres/issues"},"bundleDependencies":false,"dependencies":{"buffer-writer":"1.0.1","packet-reader":"0.3.1","pg-connection-string":"0.1.3","pg-pool":"~2.0.3","pg-types":"~1.12.1","pgpass":"1.x","semver":"4.3.2"},"deprecated":false,"description":"PostgreSQL client - pure javascript & libpq with the same API","devDependencies":{"async":"0.9.0","co":"4.6.0","eslint":"4.2.0","eslint-config-standard":"10.2.1","eslint-plugin-import":"2.7.0","eslint-plugin-node":"5.1.0","eslint-plugin-promise":"3.5.0","eslint-plugin-standard":"3.0.1","pg-copy-streams":"0.3.0"},"engines":{"node":">= 4.5.0"},"homepage":"http://github.com/brianc/node-postgres","keywords":["database","libpq","pg","postgre","postgres","postgresql","rdbms"],"license":"MIT","main":"./lib","minNativeVersion":"2.0.0","name":"pg","repository":{"type":"git","url":"git://github.com/brianc/node-postgres.git"},"scripts":{"test":"make test-all"},"version":"7.4.3"}
+
+/***/ }),
+/* 87 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+/**
+ * Copyright (c) 2010-2017 Brian Carlson (brian.m.carlson@gmail.com)
+ * All rights reserved.
+ *
+ * This source code is licensed under the MIT license found in the
+ * README.md file in the root directory of this source tree.
+ */
+
+var EventEmitter = __webpack_require__(5).EventEmitter
+var util = __webpack_require__(1)
+var utils = __webpack_require__(13)
+
+var NativeQuery = module.exports = function (config, values, callback) {
+  EventEmitter.call(this)
+  config = utils.normalizeQueryConfig(config, values, callback)
+  this.text = config.text
+  this.values = config.values
+  this.name = config.name
+  this.callback = config.callback
+  this.state = 'new'
+  this._arrayMode = config.rowMode === 'array'
+
+  // if the 'row' event is listened for
+  // then emit them as they come in
+  // without setting singleRowMode to true
+  // this has almost no meaning because libpq
+  // reads all rows into memory befor returning any
+  this._emitRowEvents = false
+  this.on('newListener', function (event) {
+    if (event === 'row') this._emitRowEvents = true
+  }.bind(this))
+}
+
+util.inherits(NativeQuery, EventEmitter)
+
+var errorFieldMap = {
+  'sqlState': 'code',
+  'statementPosition': 'position',
+  'messagePrimary': 'message',
+  'context': 'where',
+  'schemaName': 'schema',
+  'tableName': 'table',
+  'columnName': 'column',
+  'dataTypeName': 'dataType',
+  'constraintName': 'constraint',
+  'sourceFile': 'file',
+  'sourceLine': 'line',
+  'sourceFunction': 'routine'
+}
+
+NativeQuery.prototype.handleError = function (err) {
+  // copy pq error fields into the error object
+  var fields = this.native.pq.resultErrorFields()
+  if (fields) {
+    for (var key in fields) {
+      var normalizedFieldName = errorFieldMap[key] || key
+      err[normalizedFieldName] = fields[key]
+    }
+  }
+  if (this.callback) {
+    this.callback(err)
+  } else {
+    this.emit('error', err)
+  }
+  this.state = 'error'
+}
+
+NativeQuery.prototype.then = function (onSuccess, onFailure) {
+  return this._getPromise().then(onSuccess, onFailure)
+}
+
+NativeQuery.prototype.catch = function (callback) {
+  return this._getPromise().catch(callback)
+}
+
+NativeQuery.prototype._getPromise = function () {
+  if (this._promise) return this._promise
+  this._promise = new Promise(function (resolve, reject) {
+    this._once('end', resolve)
+    this._once('error', reject)
+  }.bind(this))
+  return this._promise
+}
+
+NativeQuery.prototype.submit = function (client) {
+  this.state = 'running'
+  var self = this
+  this.native = client.native
+  client.native.arrayMode = this._arrayMode
+
+  var after = function (err, rows, results) {
+    client.native.arrayMode = false
+    setImmediate(function () {
+      self.emit('_done')
+    })
+
+    // handle possible query error
+    if (err) {
+      return self.handleError(err)
+    }
+
+    // emit row events for each row in the result
+    if (self._emitRowEvents) {
+      if (results.length > 1) {
+        rows.forEach((rowOfRows, i) => {
+          rowOfRows.forEach(row => {
+            self.emit('row', row, results[i])
+          })
+        })
+      } else {
+        rows.forEach(function (row) {
+          self.emit('row', row, results)
+        })
+      }
+    }
+
+    // handle successful result
+    self.state = 'end'
+    self.emit('end', results)
+    if (self.callback) {
+      self.callback(null, results)
+    }
+  }
+
+  if (process.domain) {
+    after = process.domain.bind(after)
+  }
+
+  // named query
+  if (this.name) {
+    if (this.name.length > 63) {
+      console.error('Warning! Postgres only supports 63 characters for query names.')
+      console.error('You supplied', this.name, '(', this.name.length, ')')
+      console.error('This can cause conflicts and silent errors executing queries')
+    }
+    var values = (this.values || []).map(utils.prepareValue)
+
+    // check if the client has already executed this named query
+    // if so...just execute it again - skip the planning phase
+    if (client.namedQueries[this.name]) {
+      return client.native.execute(this.name, values, after)
+    }
+    // plan the named query the first time, then execute it
+    return client.native.prepare(this.name, this.text, values.length, function (err) {
+      if (err) return after(err)
+      client.namedQueries[self.name] = true
+      return self.native.execute(self.name, values, after)
+    })
+  } else if (this.values) {
+    if (!Array.isArray(this.values)) {
+      const err = new Error('Query values must be an array')
+      return after(err)
+    }
+    var vals = this.values.map(utils.prepareValue)
+    client.native.query(this.text, vals, after)
+  } else {
+    client.native.query(this.text, after)
+  }
+}
+
+
+/***/ }),
+/* 88 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var errorLib = __webpack_require__(33);
+var utils = __webpack_require__(34);
+
+var PEC = errorLib.parsingErrorCode;
+
+// symbols that need no spaces around them:
+var compressors = '.,;:()[]=<>+-*/|!?@#';
+
+////////////////////////////////////////////
+// Parses and minimizes a PostgreSQL script.
+function minify(sql, options) {
+
+    if (typeof sql !== 'string') {
+        throw new TypeError('Input SQL must be a text string.');
+    }
+
+    if (options !== undefined && typeof options !== 'object') {
+        throw new TypeError('Parameter \'options\' must be an object.');
+    }
+
+    if (!sql.length) {
+        return '';
+    }
+
+    var idx = 0, // current index
+        result = '', // resulting sql
+        len = sql.length, // sql length
+        EOL = utils.getEOL(sql), // end-of-line
+        space = false, // add a space on the next step
+        compress = options && options.compress; // option 'compress'
+
+    do {
+        var s = sql[idx], // current symbol;
+            s1 = sql[idx + 1]; // next symbol;
+
+        if (isGap(s)) {
+            while (++idx < len && isGap(sql[idx])) ;
+            if (idx < len) {
+                space = true;
+            }
+            idx--;
+            continue;
+        }
+
+        if (s === '-' && s1 === '-') {
+            var lb = sql.indexOf(EOL, idx + 2);
+            if (lb < 0) {
+                break;
+            }
+            idx = lb - 1;
+            skipGaps();
+            continue;
+        }
+
+        if (s === '/' && s1 === '*') {
+            var end = sql.indexOf('*/', idx + 2);
+            if (end < 0) {
+                throwError(PEC.unclosedMLC);
+            }
+
+            var nestedIdx = sql.substr(idx + 2, end - idx).search(/\/\*/);
+            if (nestedIdx !== -1) {
+                idx += 2 + nestedIdx;
+                throwError(PEC.nestedMLC);
+            }
+
+            if (sql[idx + 2] !== '!') {
+                idx = end + 1;
+                skipGaps();
+                continue;
+            }
+        }
+
+        var closeIdx, text;
+
+        if (s === '"') {
+            closeIdx = sql.indexOf('"', idx + 1);
+            if (closeIdx < 0) {
+                throwError(PEC.unclosedQI);
+            }
+            text = sql.substr(idx, closeIdx - idx + 1);
+            if (text.indexOf(EOL) > 0) {
+                throwError(PEC.multiLineQI);
+            }
+            if (compress) {
+                space = false;
+            }
+            addSpace();
+            result += text;
+            idx = closeIdx;
+            skipGaps();
+            continue;
+        }
+
+        if (s === '\'') {
+            closeIdx = idx;
+            do {
+                closeIdx = sql.indexOf('\'', closeIdx + 1);
+                if (closeIdx > 0) {
+                    var step = closeIdx;
+                    while (++step < len && sql[step] === '\'') ;
+                    if ((step - closeIdx) % 2) {
+                        closeIdx = step - 1;
+                        break;
+                    }
+                    closeIdx = step === len ? -1 : step;
+                }
+            } while (closeIdx > 0);
+            if (closeIdx < 0) {
+                throwError(PEC.unclosedText);
+            }
+            if (compress) {
+                space = false;
+            }
+            addSpace();
+            text = sql.substr(idx, closeIdx - idx + 1);
+            var hasLB = text.indexOf(EOL) > 0;
+            if (hasLB) {
+                text = text.split(EOL).map(function (m) {
+                    return m.replace(/^\s+|\s+$/g, '');
+                }).join('\\n');
+            }
+            var hasTabs = text.indexOf('\t') > 0;
+            if (hasLB || hasTabs) {
+                var prev = idx ? sql[idx - 1] : '';
+                if (prev !== 'E' && prev !== 'e') {
+                    var r = result ? result[result.length - 1] : '';
+                    if (r && r !== ' ' && compressors.indexOf(r) < 0) {
+                        result += ' ';
+                    }
+                    result += 'E';
+                }
+                if (hasTabs) {
+                    text = text.replace(/\t/g, '\\t');
+                }
+            }
+            result += text;
+            idx = closeIdx;
+            skipGaps();
+            continue;
+        }
+
+        if (compress && compressors.indexOf(s) >= 0) {
+            space = false;
+            skipGaps();
+        }
+
+        addSpace();
+        result += s;
+
+    } while (++idx < len);
+
+    return result;
+
+    function skipGaps() {
+        if (compress) {
+            while (idx < len - 1 && isGap(sql[idx + 1])) {
+                idx++;
+            }
+        }
+    }
+
+    function addSpace() {
+        if (space) {
+            if (result.length) {
+                result += ' ';
+            }
+            space = false;
+        }
+    }
+
+    function throwError(code) {
+        var position = utils.getIndexPos(sql, idx, EOL);
+        throw new errorLib.SQLParsingError(code, position);
+    }
+}
+
+////////////////////////////////////
+// Identifies a gap / empty symbol.
+function isGap(s) {
+    return s === ' ' || s === '\t' || s === '\r' || s === '\n';
+}
+
+module.exports = minify;
+
+
+/***/ }),
+/* 89 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const PromiseAdapter = __webpack_require__(35);
+
+//////////////////////////////////////////
+// Parses and validates a promise library;
+function parsePromiseLib(pl) {
+
+    let promise;
+    if (pl instanceof PromiseAdapter) {
+        promise = function (func) {
+            return pl.create(func);
+        };
+        promise.resolve = pl.resolve;
+        promise.reject = pl.reject;
+        promise.all = pl.all;
+        return promise;
+    }
+    const t = typeof pl;
+    if (t === 'function' || t === 'object') {
+        const Root = typeof pl.Promise === 'function' ? pl.Promise : pl;
+        promise = function (func) {
+            return new Root(func);
+        };
+        promise.resolve = Root.resolve;
+        promise.reject = Root.reject;
+        promise.all = Root.all;
+        if (typeof promise.resolve === 'function' &&
+            typeof promise.reject === 'function' &&
+            typeof promise.all === 'function') {
+            return promise;
+        }
+    }
+
+    throw new TypeError('Invalid promise library specified.');
+}
+
+function init(promiseLib) {
+    const result = {promiseLib};
+    if (promiseLib) {
+        result.promise = parsePromiseLib(promiseLib);
+    } else {
+        result.promise = parsePromiseLib(Promise);
+        result.promiseLib = Promise;
+    }
+    return result;
+}
+
+module.exports = init;
+
+
+/***/ }),
+/* 90 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    utils: __webpack_require__(0),
+    concat: __webpack_require__(91),
+    insert: __webpack_require__(92),
+    update: __webpack_require__(93),
+    values: __webpack_require__(94),
+    sets: __webpack_require__(95),
+    TableName: __webpack_require__(18),
+    ColumnSet: __webpack_require__(11),
+    Column: __webpack_require__(36)
+};
+
+/**
+ * @namespace helpers
+ * @description
+ * Namespace for query-formatting generators, available as {@link module:pg-promise~helpers pgp.helpers}, after initializing the library.
+ *
+ * It is a set of types and methods for generating queries in a fast, flexible and reliable way.
+ *
+ * See also: $[Performance Boost].
+ *
+ * @property {function} TableName
+ * {@link helpers.TableName TableName} class constructor.
+ *
+ * @property {function} ColumnSet
+ * {@link helpers.ColumnSet ColumnSet} class constructor.
+ *
+ * @property {function} Column
+ * {@link helpers.Column Column} class constructor.
+ *
+ * @property {function} insert
+ * {@link helpers.insert insert} static method.
+ *
+ * @property {function} update
+ * {@link helpers.update update} static method.
+ *
+ * @property {function} values
+ * {@link helpers.values values} static method.
+ *
+ * @property {function} sets
+ * {@link helpers.sets sets} static method.
+ *
+ * @property {function} concat
+ * {@link helpers.concat concat} static method.
+ */
+module.exports = config => {
+    const res = {
+        insert: (data, columns, table) => {
+            const capSQL = config.options && config.options.capSQL;
+            return npm.insert(data, columns, table, capSQL);
+        },
+        update: (data, columns, table, options) => {
+            const capSQL = config.options && config.options.capSQL;
+            return npm.update(data, columns, table, options, capSQL);
+        },
+        concat: npm.concat,
+        values: npm.values,
+        sets: npm.sets,
+        TableName: npm.TableName,
+        ColumnSet: npm.ColumnSet,
+        Column: npm.Column
+    };
+    npm.utils.lock(res, true, config.options);
+    return res;
+};
+
+
+/***/ }),
+/* 91 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    formatting: __webpack_require__(3),
+    QueryFile: __webpack_require__(10)
+};
+
+/**
+ * @method helpers.concat
+ * @description
+ * Formats and concatenates multiple queries into a single query string.
+ *
+ * Before joining the queries, the method does the following:
+ *  - Formats each query, if `values` are provided;
+ *  - Removes all leading and trailing spaces, tabs and semi-colons;
+ *  - Automatically skips all empty queries.
+ *
+ * @param {array<string|helpers.QueryFormat|QueryFile>} queries
+ * Array of mixed-type elements:
+ * - a simple query string, to be used as is
+ * - a {@link helpers.QueryFormat QueryFormat}-like object = `{query, [values], [options]}`
+ * - a {@link QueryFile} object
+ *
+ * @returns {string}
+ * Concatenated string with all queries.
+ *
+ * @example
+ *
+ * const pgp = require('pg-promise')();
+ *
+ * const qf1 = new pgp.QueryFile('./query1.sql', {minify: true});
+ * const qf2 = new pgp.QueryFile('./query2.sql', {minify: true});
+ *
+ * const query = pgp.helpers.concat([
+ *     {query: 'INSERT INTO Users(name, age) VALUES($1, $2)', values: ['John', 23]}, // QueryFormat-like object
+ *     {query: qf1, values: [1, 'Name']}, // QueryFile with formatting parameters
+ *     'SELECT count(*) FROM Users', // a simple-string query,
+ *     qf2 // direct QueryFile object
+ * ]);
+ *
+ * // query = concatenated string with all the queries
+ */
+function concat(queries) {
+    if (!Array.isArray(queries)) {
+        throw new TypeError('Parameter \'queries\' must be an array.');
+    }
+    const all = queries.map((q, index) => {
+        if (typeof q === 'string') {
+            // a simple query string without parameters:
+            return clean(q);
+        }
+        if (q && typeof q === 'object') {
+            if (q instanceof npm.QueryFile) {
+                // QueryFile object:
+                return clean(q[npm.formatting.as.ctf.toPostgres]());
+            }
+            if ('query' in q) {
+                // object {query, values, options}:
+                return clean(npm.formatting.as.format(q.query, q.values, q.options));
+            }
+        }
+        throw new Error('Invalid query element at index ' + index + '.');
+    });
+
+    return all.filter(q => q).join(';');
+}
+
+function clean(q) {
+    // removes from the query all leading and trailing symbols ' ', '\t' and ';'
+    return q.replace(/^[\s;]*|[\s;]*$/g, '');
+}
+
+module.exports = concat;
+
+/**
+ * @typedef helpers.QueryFormat
+ * @description
+ * A simple structure of parameters to be passed into method {@link formatting.format as.format} exactly as they are,
+ * used by {@link helpers.concat}.
+ *
+ * @property {string|value|object} query
+ * A query string or a value/object that implements $[Custom Type Formatting], to be formatted according to `values`.
+ *
+ * @property {array|object|value} [values]
+ * Query-formatting values.
+ *
+ * @property {object} [options]
+ * Query-formatting options, as supported by method {@link formatting.format as.format}.
+ *
+ * @see
+ * {@link formatting.format as.format}
+ */
+
+
+/***/ }),
+/* 92 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    TableName: __webpack_require__(18),
+    ColumnSet: __webpack_require__(11),
+    formatting: __webpack_require__(3),
+    utils: __webpack_require__(0)
+};
+
+/**
+ * @method helpers.insert
+ * @description
+ * Generates an `INSERT` query for either one object or an array of objects.
+ *
+ * @param {object|object[]} data
+ * An insert object with properties for insert values, or an array of such objects.
+ *
+ * When `data` is not a non-null object and not an array, it will throw {@link external:TypeError TypeError} = `Invalid parameter 'data' specified.`
+ *
+ * When `data` is an empty array, it will throw {@link external:TypeError TypeError} = `Cannot generate an INSERT from an empty array.`
+ *
+ * When `data` is an array that contains a non-object value, the method will throw {@link external:Error Error} =
+ * `Invalid insert object at index N.`
+ *
+ * @param {array|helpers.Column|helpers.ColumnSet} [columns]
+ * Set of columns to be inserted.
+ *
+ * It is optional when `data` is a single object, and required when `data` is an array of objects. If not specified for an array
+ * of objects, the method will throw {@link external:TypeError TypeError} = `Parameter 'columns' is required when inserting multiple records.`
+ *
+ * When `columns` is not a {@link helpers.ColumnSet ColumnSet} object, a temporary {@link helpers.ColumnSet ColumnSet}
+ * is created - from the value of `columns` (if it was specified), or from the value of `data` (if it is not an array).
+ *
+ * When the final {@link helpers.ColumnSet ColumnSet} is empty (no columns in it), the method will throw
+ * {@link external:Error Error} = `Cannot generate an INSERT without any columns.`
+ *
+ * @param {helpers.TableName|string|{table,schema}} [table]
+ * Destination table.
+ *
+ * It is normally a required parameter. But when `columns` is passed in as a {@link helpers.ColumnSet ColumnSet} object
+ * with `table` set in it, that will be used when this parameter isn't specified. When neither is available, the method
+ * will throw {@link external:Error Error} = `Table name is unknown.`
+ *
+ * @returns {string}
+ * The resulting query string.
+ *
+ * @see
+ *  {@link helpers.Column Column},
+ *  {@link helpers.ColumnSet ColumnSet},
+ *  {@link helpers.TableName TableName}
+ *
+ * @example
+ *
+ * const pgp = require('pg-promise')({
+ *    capSQL: true // if you want all generated SQL capitalized
+ * });
+ *
+ * const dataSingle = {val: 123, msg: 'hello'};
+ * const dataMulti = [{val: 123, msg: 'hello'}, {val: 456, msg: 'world!'}];
+ *
+ * // Column details can be taken from the data object:
+ *
+ * pgp.helpers.insert(dataSingle, null, 'my-table');
+ * //=> INSERT INTO "my-table"("val","msg") VALUES(123,'hello')
+ *
+ * @example
+ *
+ * // Column details are required for a multi-row `INSERT`:
+ *
+ * pgp.helpers.insert(dataMulti, ['val', 'msg'], 'my-table');
+ * //=> INSERT INTO "my-table"("val","msg") VALUES(123,'hello'),(456,'world!')
+ *
+ * @example
+ *
+ * // Column details from a reusable ColumnSet (recommended for performance):
+ *
+ * const cs = new pgp.helpers.ColumnSet(['val', 'msg'], {table: 'my-table'});
+ *
+ * pgp.helpers.insert(dataMulti, cs);
+ * //=> INSERT INTO "my-table"("val","msg") VALUES(123,'hello'),(456,'world!')
+ *
+ */
+function insert(data, columns, table, capSQL) {
+
+    if (!data || typeof data !== 'object') {
+        throw new TypeError('Invalid parameter \'data\' specified.');
+    }
+
+    const isArray = Array.isArray(data);
+
+    if (isArray && !data.length) {
+        throw new TypeError('Cannot generate an INSERT from an empty array.');
+    }
+
+    if (columns instanceof npm.ColumnSet) {
+        if (npm.utils.isNull(table)) {
+            table = columns.table;
+        }
+    } else {
+        if (isArray && npm.utils.isNull(columns)) {
+            throw new TypeError('Parameter \'columns\' is required when inserting multiple records.');
+        }
+        columns = new npm.ColumnSet(columns || data);
+    }
+
+    if (!columns.columns.length) {
+        throw new Error('Cannot generate an INSERT without any columns.');
+    }
+
+    if (!table) {
+        throw new Error('Table name is unknown.');
+    }
+
+    if (!(table instanceof npm.TableName)) {
+        table = new npm.TableName(table);
+    }
+
+    let query = capSQL ? sql.capCase : sql.lowCase;
+
+    const format = npm.formatting.as.format;
+    query = format(query, [table.name, columns.names]);
+
+    if (isArray) {
+        return query + data.map((d, index) => {
+            if (!d || typeof d !== 'object') {
+                throw new Error('Invalid insert object at index ' + index + '.');
+            }
+            return '(' + format(columns.variables, columns.prepare(d)) + ')';
+        }).join();
+    }
+    return query + '(' + format(columns.variables, columns.prepare(data)) + ')';
+}
+
+const sql = {
+    lowCase: 'insert into $1^($2^) values',
+    capCase: 'INSERT INTO $1^($2^) VALUES'
+};
+
+module.exports = insert;
+
+
+/***/ }),
+/* 93 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    TableName: __webpack_require__(18),
+    ColumnSet: __webpack_require__(11),
+    formatting: __webpack_require__(3),
+    utils: __webpack_require__(0)
+};
+
+/**
+ * @method helpers.update
+ * @description
+ * Generates a simplified `UPDATE` query for either one object or an array of objects.
+ *
+ * The resulting query needs a `WHERE` clause to be appended to it, to determine the update logic.
+ * This is to allow for update conditions of any complexity that are easy to add.
+ *
+ * @param {object|object[]} data
+ * An update object with properties for update values, or an array of such objects.
+ *
+ * When `data` is not a non-null object and not an array, it will throw {@link external:TypeError TypeError} = `Invalid parameter 'data' specified.`
+ *
+ * When `data` is an empty array, it will throw {@link external:TypeError TypeError} = `Cannot generate an UPDATE from an empty array.`
+ *
+ * When `data` is an array that contains a non-object value, the method will throw {@link external:Error Error} =
+ * `Invalid update object at index N.`
+ *
+ * @param {array|helpers.Column|helpers.ColumnSet} [columns]
+ * Set of columns to be updated.
+ *
+ * It is optional when `data` is a single object, and required when `data` is an array of objects. If not specified for an array
+ * of objects, the method will throw {@link external:TypeError TypeError} = `Parameter 'columns' is required when updating multiple records.`
+ *
+ * When `columns` is not a {@link helpers.ColumnSet ColumnSet} object, a temporary {@link helpers.ColumnSet ColumnSet}
+ * is created - from the value of `columns` (if it was specified), or from the value of `data` (if it is not an array).
+ *
+ * When the final {@link helpers.ColumnSet ColumnSet} is empty (no columns in it), the method will throw
+ * {@link external:Error Error} = `Cannot generate an UPDATE without any columns.`, unless option `emptyUpdate` was specified.
+ *
+ * @param {helpers.TableName|string|{table,schema}} [table]
+ * Table to be updated.
+ *
+ * It is normally a required parameter. But when `columns` is passed in as a {@link helpers.ColumnSet ColumnSet} object
+ * with `table` set in it, that will be used when this parameter isn't specified. When neither is available, the method
+ * will throw {@link external:Error Error} = `Table name is unknown.`
+ *
+ * @param {object} [options]
+ * An object with formatting options for multi-row `UPDATE` queries.
+ *
+ * @param {string} [options.tableAlias=t]
+ * Name of the SQL variable that represents the destination table.
+ *
+ * @param {string} [options.valueAlias=v]
+ * Name of the SQL variable that represents the values.
+ *
+ * @param {*} [options.emptyUpdate]
+ * This is a convenience option, to avoid throwing an error when generating a conditional update results in no columns.
+ *
+ * When present, regardless of the value, this option overrides the method's behaviour when applying `skip` logic results in no columns,
+ * i.e. when every column is being skipped.
+ *
+ * By default, in that situation the method throws {@link external:Error Error} = `Cannot generate an UPDATE without any columns.`
+ * But when this option is present, the method will instead return whatever value the option was passed.
+ *
+ * @returns {*}
+ * The method usually returns the resulting query string that typically needs a `WHERE` condition appended.
+ *
+ * However, if it results in an empty update, and option `emptyUpdate` was passed in, then the method returns whatever
+ * value the option was passed.
+ *
+ * @see
+ *  {@link helpers.Column Column},
+ *  {@link helpers.ColumnSet ColumnSet},
+ *  {@link helpers.TableName TableName}
+ *
+ * @example
+ *
+ * const pgp = require('pg-promise')({
+ *    capSQL: true // if you want all generated SQL capitalized
+ * });
+ *
+ * const dataSingle = {id: 1, val: 123, msg: 'hello'};
+ * const dataMulti = [{id: 1, val: 123, msg: 'hello'}, {id: 2, val: 456, msg: 'world!'}];
+ *
+ * // Although column details can be taken from the data object, it is not
+ * // a likely scenario for an update, unless updating the whole table:
+ *
+ * pgp.helpers.update(dataSingle, null, 'my-table');
+ * //=> UPDATE "my-table" SET "id"=1,"val"=123,"msg"='hello'
+ *
+ * @example
+ *
+ * // A typical single-object update:
+ *
+ * pgp.helpers.update(dataSingle, ['val', 'msg'], 'my-table') + ' WHERE id = ' + dataSingle.id;
+ * //=> UPDATE "my-table" SET "val"=123,"msg"='hello' WHERE id = 1
+ *
+ * @example
+ *
+ * // Column details are required for a multi-row `UPDATE`;
+ * // Adding '?' in front of a column name means it is only for a WHERE condition:
+ *
+ * pgp.helpers.update(dataMulti, ['?id', 'val', 'msg'], 'my-table') + ' WHERE v.id = t.id';
+ * //=> UPDATE "my-table" AS t SET "val"=v."val","msg"=v."msg" FROM (VALUES(1,123,'hello'),(2,456,'world!'))
+ * //   AS v("id","val","msg") WHERE v.id = t.id
+ *
+ * @example
+ *
+ * // Column details from a reusable ColumnSet (recommended for performance):
+ *
+ * const cs = new pgp.helpers.ColumnSet(['?id', 'val', 'msg'], {table: 'my-table'});
+ *
+ * pgp.helpers.update(dataMulti, cs) + ' WHERE v.id = t.id';
+ * //=> UPDATE "my-table" AS t SET "val"=v."val","msg"=v."msg" FROM (VALUES(1,123,'hello'),(2,456,'world!'))
+ * //   AS v("id","val","msg") WHERE v.id = t.id
+ *
+ * @example
+ *
+ * // Using parameter `options` to change the default alias names:
+ *
+ * pgp.helpers.update(dataMulti, cs, null, {tableAlias: 'X', valueAlias: 'Y'}) + ' WHERE Y.id = X.id';
+ * //=> UPDATE "my-table" AS X SET "val"=Y."val","msg"=Y."msg" FROM (VALUES(1,123,'hello'),(2,456,'world!'))
+ * //   AS Y("id","val","msg") WHERE Y.id = X.id
+ *
+ * @example
+ *
+ * // Handling an empty update
+ *
+ * const cs = new pgp.helpers.ColumnSet(['?id', '?name'], {table: 'tt'}); // no actual update-able columns
+ * const result = pgp.helpers.update(dataMulti, cs, null, {emptyUpdate: 123});
+ * if(result === 123) {
+ *    // We know the update is empty, i.e. no columns that can be updated;
+ *    // And it didn't throw because we specified `emptyUpdate` option.
+ * }
+ */
+function update(data, columns, table, options, capSQL) {
+
+    if (!data || typeof data !== 'object') {
+        throw new TypeError('Invalid parameter \'data\' specified.');
+    }
+
+    const isArray = Array.isArray(data);
+
+    if (isArray && !data.length) {
+        throw new TypeError('Cannot generate an UPDATE from an empty array.');
+    }
+
+    if (columns instanceof npm.ColumnSet) {
+        if (npm.utils.isNull(table)) {
+            table = columns.table;
+        }
+    } else {
+        if (isArray && npm.utils.isNull(columns)) {
+            throw new TypeError('Parameter \'columns\' is required when updating multiple records.');
+        }
+        columns = new npm.ColumnSet(columns || data);
+    }
+
+    options = options || {};
+
+    const format = npm.formatting.as.format,
+        useEmptyUpdate = 'emptyUpdate' in options;
+
+    if (isArray) {
+        const tableAlias = npm.formatting.as.alias(npm.utils.isNull(options.tableAlias) ? 't' : options.tableAlias);
+        const valueAlias = npm.formatting.as.alias(npm.utils.isNull(options.valueAlias) ? 'v' : options.valueAlias);
+
+        const q = capSQL ? sql.multi.capCase : sql.multi.lowCase;
+
+        const actualColumns = columns.columns.filter(c => !c.cnd);
+
+        if (checkColumns(actualColumns)) {
+            return options.emptyUpdate;
+        }
+
+        checkTable();
+
+        const targetCols = actualColumns.map(c => c.escapedName + '=' + valueAlias + '.' + c.escapedName).join();
+
+        const values = data.map((d, index) => {
+            if (!d || typeof d !== 'object') {
+                throw new Error('Invalid update object at index ' + index + '.');
+            }
+            return '(' + format(columns.variables, columns.prepare(d)) + ')';
+        }).join();
+
+        return format(q, [table.name, tableAlias, targetCols, values, valueAlias, columns.names]);
+    }
+
+    const updates = columns.assign({source: data});
+
+    if (checkColumns(updates)) {
+        return options.emptyUpdate;
+    }
+
+    checkTable();
+
+    const query = capSQL ? sql.single.capCase : sql.single.lowCase;
+
+    return format(query, table.name) + format(updates, columns.prepare(data));
+
+    function checkTable() {
+        if (table && !(table instanceof npm.TableName)) {
+            table = new npm.TableName(table);
+        }
+        if (!table) {
+            throw new Error('Table name is unknown.');
+        }
+    }
+
+    function checkColumns(cols) {
+        if (!cols.length) {
+            if (useEmptyUpdate) {
+                return true;
+            }
+            throw new Error('Cannot generate an UPDATE without any columns.');
+        }
+    }
+}
+
+const sql = {
+    single: {
+        lowCase: 'update $1^ set ',
+        capCase: 'UPDATE $1^ SET '
+    },
+    multi: {
+        lowCase: 'update $1^ as $2^ set $3^ from (values$4^) as $5^($6^)',
+        capCase: 'UPDATE $1^ AS $2^ SET $3^ FROM (VALUES$4^) AS $5^($6^)'
+    }
+};
+
+module.exports = update;
+
+
+/***/ }),
+/* 94 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    ColumnSet: __webpack_require__(11),
+    formatting: __webpack_require__(3),
+    utils: __webpack_require__(0)
+};
+
+/**
+ * @method helpers.values
+ * @description
+ * Generates a string of comma-separated value groups from either one object or an array of objects,
+ * to be used as part of a query:
+ *
+ * - from a single object: `(val_1, val_2, ...)`
+ * - from an array of objects: `(val_11, val_12, ...), (val_21, val_22, ...)`
+ *
+ * @param {object|object[]} data
+ * A source object with properties as values, or an array of such objects.
+ *
+ * If it is anything else, the method will throw {@link external:TypeError TypeError} = `Invalid parameter 'data' specified.`
+ *
+ * When `data` is an array that contains a non-object value, the method will throw {@link external:Error Error} =
+ * `Invalid object at index N.`
+ *
+ * When `data` is an empty array, an empty string is returned.
+ *
+ * @param {array|helpers.Column|helpers.ColumnSet} [columns]
+ * Columns for which to return values.
+ *
+ * It is optional when `data` is a single object, and required when `data` is an array of objects. If not specified for an array
+ * of objects, the method will throw {@link external:TypeError TypeError} = `Parameter 'columns' is required when generating multi-row values.`
+ *
+ * When the final {@link helpers.ColumnSet ColumnSet} is empty (no columns in it), the method will throw
+ * {@link external:Error Error} = `Cannot generate values without any columns.`
+ *
+ * @returns {string}
+ * - comma-separated value groups, according to `data`
+ * - an empty string, if `data` is an empty array
+ *
+ * @see
+ *  {@link helpers.Column Column},
+ *  {@link helpers.ColumnSet ColumnSet}
+ *
+ * @example
+ *
+ * const pgp = require('pg-promise')();
+ *
+ * const dataSingle = {val: 123, msg: 'hello'};
+ * const dataMulti = [{val: 123, msg: 'hello'}, {val: 456, msg: 'world!'}];
+ *
+ * // Properties can be pulled automatically from a single object:
+ *
+ * pgp.helpers.values(dataSingle);
+ * //=> (123,'hello')
+ *
+ * @example
+ *
+ * // Column details are required when using an array of objects:
+ *
+ * pgp.helpers.values(dataMulti, ['val', 'msg']);
+ * //=> (123,'hello'),(456,'world!')
+ *
+ * @example
+ *
+ * // Column details from a reusable ColumnSet (recommended for performance):
+ *
+ * const cs = new pgp.helpers.ColumnSet(['val', 'msg']);
+ *
+ * pgp.helpers.values(dataMulti, cs);
+ * //=> (123,'hello'),(456,'world!')
+ *
+ */
+function values(data, columns) {
+
+    if (!data || typeof data !== 'object') {
+        throw new TypeError('Invalid parameter \'data\' specified.');
+    }
+
+    const isArray = Array.isArray(data);
+
+    if (!(columns instanceof npm.ColumnSet)) {
+        if (isArray && npm.utils.isNull(columns)) {
+            throw new TypeError('Parameter \'columns\' is required when generating multi-row values.');
+        }
+        columns = new npm.ColumnSet(columns || data);
+    }
+
+    if (!columns.columns.length) {
+        throw new Error('Cannot generate values without any columns.');
+    }
+
+    const format = npm.formatting.as.format;
+
+    if (isArray) {
+        return data.map((d, index) => {
+            if (!d || typeof d !== 'object') {
+                throw new Error('Invalid object at index ' + index + '.');
+            }
+            return '(' + format(columns.variables, columns.prepare(d)) + ')';
+        }).join();
+    }
+    return '(' + format(columns.variables, columns.prepare(data)) + ')';
+}
+
+module.exports = values;
+
+
+/***/ }),
+/* 95 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    ColumnSet: __webpack_require__(11),
+    format: __webpack_require__(3).as.format,
+    utils: __webpack_require__(0)
+};
+
+/**
+ * @method helpers.sets
+ * @description
+ * Generates a string of comma-separated value-set statements from a single object: `col1=val1, col2=val2, ...`,
+ * to be used as part of a query.
+ *
+ * Since it is to be used as part of `UPDATE` queries, {@link helpers.Column Column} properties `cnd` and `skip` apply.
+ *
+ * @param {object} data
+ * A simple, non-null and non-array source object.
+ *
+ * If it is anything else, the method will throw {@link external:TypeError TypeError} = `Invalid parameter 'data' specified.`
+ *
+ * @param {array|helpers.Column|helpers.ColumnSet} [columns]
+ * Columns for which to set values.
+ *
+ * When not specified, properties of the `data` object are used.
+ *
+ * When no effective columns are found, an empty string is returned.
+ *
+ * @returns {string}
+ * - comma-separated value-set statements for the `data` object
+ * - an empty string, if no effective columns found
+ *
+ * @see
+ *  {@link helpers.Column Column},
+ *  {@link helpers.ColumnSet ColumnSet}
+ *
+ * @example
+ *
+ * const pgp = require('pg-promise')();
+ *
+ * const data = {id: 1, val: 123, msg: 'hello'};
+ *
+ * // Properties can be pulled automatically from the object:
+ *
+ * pgp.helpers.sets(data);
+ * //=> "id"=1,"val"=123,"msg"='hello'
+ *
+ * @example
+ *
+ * // Column details from a reusable ColumnSet (recommended for performance);
+ * // NOTE: Conditional columns (start with '?') are skipped:
+ *
+ * const cs = new pgp.helpers.ColumnSet(['?id','val', 'msg']);
+ *
+ * pgp.helpers.sets(data, cs);
+ * //=> "val"=123,"msg"='hello'
+ *
+ */
+function sets(data, columns) {
+
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new TypeError('Invalid parameter \'data\' specified.');
+    }
+
+    if (!(columns instanceof npm.ColumnSet)) {
+        columns = new npm.ColumnSet(columns || data);
+    }
+
+    return npm.format(columns.assign({source: data}), columns.prepare(data));
+}
+
+module.exports = sets;
+
+
+/***/ }),
+/* 96 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    os: __webpack_require__(2),
+    utils: __webpack_require__(0),
+    text: __webpack_require__(6)
+};
+
+/**
+ * @enum {number}
+ * @alias errors.queryResultErrorCode
+ * @readonly
+ * @description
+ * `queryResultErrorCode` enumerator, available from the {@link errors} namespace.
+ *
+ * Represents an integer code for each type of error supported by type {@link errors.QueryResultError}.
+ *
+ * @see {@link errors.QueryResultError}
+ */
+const queryResultErrorCode = {
+    /** No data returned from the query. */
+    noData: 0,
+
+    /** No return data was expected. */
+    notEmpty: 1,
+
+    /** Multiple rows were not expected. */
+    multiple: 2
+};
+
+Object.freeze(queryResultErrorCode);
+
+const errorMessages = [
+    {name: 'noData', message: npm.text.noData},
+    {name: 'notEmpty', message: npm.text.notEmpty},
+    {name: 'multiple', message: npm.text.multiple}
+];
+
+/**
+ * @class errors.QueryResultError
+ * @augments external:Error
+ * @description
+ *
+ * This error is specified as the rejection reason for all result-specific methods when the result doesn't match
+ * the expectation, i.e. when a query result doesn't match its Query Result Mask - the value of {@link queryResult}.
+ *
+ * The error applies to the result from the following methods: {@link Database#none none},
+ * {@link Database#one one}, {@link Database#oneOrNone oneOrNone} and {@link Database#many many}.
+ *
+ * Supported errors:
+ *
+ * - `No return data was expected.`, method {@link Database#none none}
+ * - `No data returned from the query.`, methods {@link Database#one one} and {@link Database#many many}
+ * - `Multiple rows were not expected.`, methods {@link Database#one one} and {@link Database#oneOrNone oneOrNone}
+ *
+ * Like any other error, this one is notified with through the global event {@link event:error error}.
+ *
+ * The type is available from the {@link errors} namespace.
+ *
+ * @property {string} name
+ * Standard {@link external:Error Error} property - error type name = `QueryResultError`.
+ *
+ * @property {string} message
+ * Standard {@link external:Error Error} property - the error message.
+ *
+ * @property {string} stack
+ * Standard {@link external:Error Error} property - the stack trace.
+ *
+ * @property {object} result
+ * The original $[Result] object that was received.
+ *
+ * @property {number} received
+ * Total number of rows received. It is simply the value of `result.rows.length`.
+ *
+ * @property {number} code
+ * Error code - {@link errors.queryResultErrorCode queryResultErrorCode} value.
+ *
+ * @property {string} query
+ * Query that was executed.
+ *
+ * Normally, it is the query already formatted with values, if there were any.
+ * But if you are using initialization option `pgFormatting`, then the query string is before formatting.
+ *
+ * @property {*} values
+ * Values passed in as query parameters. Available only when initialization option `pgFormatting` is used.
+ * Otherwise, the values are within the pre-formatted `query` string.
+ *
+ * @example
+ *
+ * const QueryResultError = pgp.errors.QueryResultError;
+ * const qrec = pgp.errors.queryResultErrorCode;
+ *
+ * const initOptions = {
+ *
+ *   // pg-promise initialization options...
+ *
+ *   error: (err, e) => {
+ *       if (err instanceof QueryResultError) {
+ *           // A query returned unexpected number of records, and thus rejected;
+ *           
+ *           // we can check the error code, if we want specifics:
+ *           if(err.code === qrec.noData) {
+ *               // expected some data, but received none;
+ *           }
+ *
+ *           // If you write QueryResultError into the console,
+ *           // you will get a nicely formatted output.
+ *
+ *           console.log(err);
+ *           
+ *           // See also: err, e.query, e.params, etc.
+ *       }
+ *   }
+ * };
+ *
+ * @see
+ * {@link queryResult}, {@link Database#none none}, {@link Database#one one},
+ * {@link Database#oneOrNone oneOrNone}, {@link Database#many many}
+ *
+ */
+function QueryResultError(code, result, query, values) {
+    const temp = Error.apply(this, arguments);
+    temp.name = this.name = 'QueryResultError';
+    this.stack = temp.stack;
+    this.message = errorMessages[code].message;
+    this.code = code;
+    this.result = result;
+    this.query = query;
+    this.values = values;
+    this.received = result.rows.length;
+}
+
+QueryResultError.prototype = Object.create(Error.prototype, {
+    constructor: {
+        value: QueryResultError,
+        writable: true,
+        configurable: true
+    }
+});
+
+/**
+ * @method errors.QueryResultError#toString
+ * @description
+ * Creates a well-formatted multi-line string that represents the error.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * @param {number} [level=0]
+ * Nested output level, to provide visual offset.
+ *
+ * @returns {string}
+ */
+QueryResultError.prototype.toString = function (level) {
+    level = level > 0 ? parseInt(level) : 0;
+    const gap0 = npm.utils.messageGap(level),
+        gap1 = npm.utils.messageGap(level + 1),
+        lines = [
+            'QueryResultError {',
+            gap1 + 'code: queryResultErrorCode.' + errorMessages[this.code].name,
+            gap1 + 'message: "' + this.message + '"',
+            gap1 + 'received: ' + this.received,
+            gap1 + 'query: ' + (typeof this.query === 'string' ? '"' + this.query + '"' : JSON.stringify(this.query))
+        ];
+    if (this.values !== undefined) {
+        lines.push(gap1 + 'values: ' + JSON.stringify(this.values));
+    }
+    lines.push(gap0 + '}');
+    return lines.join(npm.os.EOL);
+};
+
+npm.utils.addInspection(QueryResultError, function () {
+    return this.toString();
+});
+
+module.exports = {
+    QueryResultError,
+    queryResultErrorCode
+};
+
+
+/***/ }),
+/* 97 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    os: __webpack_require__(2),
+    utils: __webpack_require__(0),
+    QueryFileError: __webpack_require__(17)
+};
+
+/**
+ * @class errors.PreparedStatementError
+ * @augments external:Error
+ * @description
+ * {@link errors.PreparedStatementError PreparedStatementError} class, available from the {@link errors} namespace.
+ *
+ * This type represents all errors that can be reported by class {@link PreparedStatement}, whether it is used
+ * explicitly or implicitly (via a simple `{name, text, values}` object).
+ *
+ * @property {string} name
+ * Standard {@link external:Error Error} property - error type name = `PreparedStatementError`.
+ *
+ * @property {string} message
+ * Standard {@link external:Error Error} property - the error message.
+ *
+ * @property {string} stack
+ * Standard {@link external:Error Error} property - the stack trace.
+ *
+ * @property {errors.QueryFileError} error
+ * Internal {@link errors.QueryFileError} object.
+ *
+ * It is set only when the source {@link PreparedStatement} used a {@link QueryFile} which threw the error.
+ *
+ * @property {object} result
+ * Resulting Prepared Statement object.
+ *
+ * @see PreparedStatement
+ */
+function PreparedStatementError(error, ps) {
+    const temp = Error.apply(this, arguments);
+    temp.name = this.name = 'PreparedStatementError';
+    this.stack = temp.stack;
+    if (error instanceof npm.QueryFileError) {
+        this.error = error;
+        this.message = 'Failed to initialize \'text\' from a QueryFile.';
+    } else {
+        this.message = error;
+    }
+    this.result = ps;
+}
+
+PreparedStatementError.prototype = Object.create(Error.prototype, {
+    constructor: {
+        value: PreparedStatementError,
+        writable: true,
+        configurable: true
+    }
+});
+
+/**
+ * @method errors.PreparedStatementError#toString
+ * @description
+ * Creates a well-formatted multi-line string that represents the error.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * @param {number} [level=0]
+ * Nested output level, to provide visual offset.
+ *
+ * @returns {string}
+ */
+PreparedStatementError.prototype.toString = function (level) {
+    level = level > 0 ? parseInt(level) : 0;
+    const gap0 = npm.utils.messageGap(level),
+        gap1 = npm.utils.messageGap(level + 1),
+        gap2 = npm.utils.messageGap(level + 2),
+        lines = [
+            'PreparedStatementError {',
+            gap1 + 'message: "' + this.message + '"',
+            gap1 + 'result: {',
+            gap2 + 'name: ' + JSON.stringify(this.result.name),
+            gap2 + 'text: ' + JSON.stringify(this.result.text),
+            gap2 + 'values: ' + JSON.stringify(this.result.values),
+            gap1 + '}'
+        ];
+    if (this.error) {
+        lines.push(gap1 + 'error: ' + this.error.toString(level + 1));
+    }
+    lines.push(gap0 + '}');
+    return lines.join(npm.os.EOL);
+};
+
+npm.utils.addInspection(PreparedStatementError, function () {
+    return this.toString();
+});
+
+module.exports = PreparedStatementError;
+
+
+/***/ }),
+/* 98 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    os: __webpack_require__(2),
+    utils: __webpack_require__(0),
+    QueryFileError: __webpack_require__(17)
+};
+
+/**
+ * @class errors.ParameterizedQueryError
+ * @augments external:Error
+ * @description
+ * {@link errors.ParameterizedQueryError ParameterizedQueryError} class, available from the {@link errors} namespace.
+ *
+ * This type represents all errors that can be reported by class {@link ParameterizedQuery}, whether it is used
+ * explicitly or implicitly (via a simple `{text, values}` object).
+ *
+ * @property {string} name
+ * Standard {@link external:Error Error} property - error type name = `ParameterizedQueryError`.
+ *
+ * @property {string} message
+ * Standard {@link external:Error Error} property - the error message.
+ *
+ * @property {string} stack
+ * Standard {@link external:Error Error} property - the stack trace.
+ *
+ * @property {errors.QueryFileError} error
+ * Internal {@link errors.QueryFileError} object.
+ *
+ * It is set only when the source {@link ParameterizedQuery} used a {@link QueryFile} which threw the error.
+ *
+ * @property {object} result
+ * Resulting Parameterized Query object.
+ *
+ * @see ParameterizedQuery
+ */
+function ParameterizedQueryError(error, ps) {
+    const temp = Error.apply(this, arguments);
+    temp.name = this.name = 'ParameterizedQueryError';
+    this.stack = temp.stack;
+    if (error instanceof npm.QueryFileError) {
+        this.error = error;
+        this.message = 'Failed to initialize \'text\' from a QueryFile.';
+    } else {
+        this.message = error;
+    }
+    this.result = ps;
+}
+
+ParameterizedQueryError.prototype = Object.create(Error.prototype, {
+    constructor: {
+        value: ParameterizedQueryError,
+        writable: true,
+        configurable: true
+    }
+});
+
+/**
+ * @method errors.ParameterizedQueryError#toString
+ * @description
+ * Creates a well-formatted multi-line string that represents the error.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * @param {number} [level=0]
+ * Nested output level, to provide visual offset.
+ *
+ * @returns {string}
+ */
+ParameterizedQueryError.prototype.toString = function (level) {
+    level = level > 0 ? parseInt(level) : 0;
+    const gap0 = npm.utils.messageGap(level),
+        gap1 = npm.utils.messageGap(level + 1),
+        gap2 = npm.utils.messageGap(level + 2),
+        lines = [
+            'ParameterizedQueryError {',
+            gap1 + 'message: "' + this.message + '"',
+            gap1 + 'result: {',
+            gap2 + 'text: ' + JSON.stringify(this.result.text),
+            gap2 + 'values: ' + JSON.stringify(this.result.values),
+            gap1 + '}'
+        ];
+    if (this.error) {
+        lines.push(gap1 + 'error: ' + this.error.toString(level + 1));
+    }
+    lines.push(gap0 + '}');
+    return lines.join(npm.os.EOL);
+};
+
+npm.utils.addInspection(ParameterizedQueryError, function () {
+    return this.toString();
+});
+
+module.exports = ParameterizedQueryError;
+
+
+/***/ }),
+/* 99 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    os: __webpack_require__(2),
+    utils: __webpack_require__(0),
+    errors: __webpack_require__(19),
+    QueryFile: __webpack_require__(10)
+};
+
+/**
+ * @class PreparedStatement
+ * @description
+ * **Alternative Syntax:** `PreparedStatement({name, text, values, ...})` &#8658; {@link PreparedStatement}
+ *
+ * Constructs a new $[Prepared Statement] object.
+ *
+ * The alternative syntax supports advanced properties {@link PreparedStatement#binary binary}, {@link PreparedStatement#rowMode rowMode}
+ * and {@link PreparedStatement#rows rows}, which are passed into $[pg], but not used by the class.
+ *
+ * All properties can also be set after the object's construction.
+ *
+ * This type extends the basic `{name, text, values}` object, by replacing it, i.e. when the basic object is used
+ * with a query method, a new {@link PreparedStatement} object is created implicitly in its place.
+ *
+ * The type can be used in place of the `query` parameter, with any query method directly. And it never throws any error,
+ * leaving it for query methods to reject with {@link errors.PreparedStatementError PreparedStatementError}.
+ *
+ * The type is available from the library's root: `pgp.PreparedStatement`.
+ *
+ * @param {string} name
+ * An arbitrary name given to this particular prepared statement. It must be unique within a single session and is
+ * subsequently used to execute or deallocate a previously prepared statement.
+ *
+ * @param {string|QueryFile} text
+ * A non-empty query string or a {@link QueryFile} object.
+ *
+ * Only the basic variables (`$1`, `$2`, etc) can be used in the query, because $[Prepared Statements] are formatted by the database server.
+ *
+ * @param {array} [values]
+ * Query formatting values. When it is not an `Array` and not `null`/`undefined`, it is automatically wrapped into an array.
+ *
+ * @returns {PreparedStatement}
+ *
+ * @see
+ * {@link errors.PreparedStatementError PreparedStatementError},
+ * {@link http://www.postgresql.org/docs/9.5/static/sql-prepare.html PostgreSQL Prepared Statements}
+ *
+ * @example
+ *
+ * const PS = require('pg-promise').PreparedStatement;
+ *
+ * // Creating a complete Prepared Statement with parameters:
+ * const findUser = new PS('find-user', 'SELECT * FROM Users WHERE id = $1', [123]);
+ *
+ * db.one(findUser)
+ *     .then(user => {
+ *         // user found;
+ *     })
+ *     .catch(error => {
+ *         // error;
+ *     });
+ *
+ * @example
+ *
+ * const PS = require('pg-promise').PreparedStatement;
+ *
+ * // Creating a reusable Prepared Statement without values:
+ * const addUser = new PS('add-user', 'INSERT INTO Users(name, age) VALUES($1, $2)');
+ *
+ * // setting values explicitly:
+ * addUser.values = ['John', 30];
+ *
+ * db.none(addUser)
+ *     .then(() => {
+ *         // user added;
+ *     })
+ *     .catch(error => {
+ *         // error;
+ *     });
+ *
+ * // setting values implicitly, by passing them into the query method:
+ * db.none(addUser, ['Mike', 25])
+ *     .then(() => {
+ *         // user added;
+ *     })
+ *     .catch(error => {
+ *         // error;
+ *     });
+ */
+function PreparedStatement(name, text, values) {
+    if (!(this instanceof PreparedStatement)) {
+        return new PreparedStatement(name, text, values);
+    }
+
+    let currentError, PS = {}, changed = true;
+    const state = {
+        name,
+        text,
+        binary: undefined,
+        rowMode: undefined,
+        rows: undefined
+    };
+
+    function setValues(v) {
+        if (Array.isArray(v)) {
+            if (v.length) {
+                PS.values = v;
+            } else {
+                delete PS.values;
+            }
+        } else {
+            if (npm.utils.isNull(v)) {
+                delete PS.values;
+            } else {
+                PS.values = [v];
+            }
+        }
+    }
+
+    setValues(values);
+
+    /**
+     * @name PreparedStatement#name
+     * @type {string}
+     * @description
+     * An arbitrary name given to this particular prepared statement. It must be unique within a single session and is
+     * subsequently used to execute or deallocate a previously prepared statement.
+     */
+    Object.defineProperty(this, 'name', {
+        get() {
+            return state.name;
+        },
+        set(value) {
+            if (value !== state.name) {
+                state.name = value;
+                changed = true;
+            }
+        }
+    });
+
+    /**
+     * @name PreparedStatement#text
+     * @type {string|QueryFile}
+     * @description
+     * A non-empty query string or a {@link QueryFile} object.
+     *
+     * Changing this property for the same {@link PreparedStatement#name name} will have no effect, because queries
+     * for Prepared Statements are cached, with {@link PreparedStatement#name name} being the cache key.
+     */
+    Object.defineProperty(this, 'text', {
+        get() {
+            return state.text;
+        },
+        set(value) {
+            if (value !== state.text) {
+                state.text = value;
+                changed = true;
+            }
+        }
+    });
+
+    /**
+     * @name PreparedStatement#values
+     * @type {array}
+     * @description
+     * Query formatting parameters, depending on the type:
+     *
+     * - `null` / `undefined` means the query has no formatting parameters
+     * - `Array` - it is an array of formatting parameters
+     * - None of the above, means it is a single formatting value, which
+     *   is then automatically wrapped into an array
+     */
+    Object.defineProperty(this, 'values', {
+        get() {
+            return PS.values;
+        },
+        set(value) {
+            setValues(value);
+        }
+    });
+
+    /**
+     * @name PreparedStatement#binary
+     * @type {boolean}
+     * @default undefined
+     * @description
+     * Activates binary result mode. The default is the text mode.
+     *
+     * @see {@link http://www.postgresql.org/docs/devel/static/protocol-flow.html#PROTOCOL-FLOW-EXT-QUERY Extended Query}
+     */
+    Object.defineProperty(this, 'binary', {
+        get() {
+            return state.binary;
+        },
+        set(value) {
+            if (value !== state.binary) {
+                state.binary = value;
+                changed = true;
+            }
+        }
+    });
+
+    /**
+     * @name PreparedStatement#rowMode
+     * @type {string}
+     * @default undefined
+     * @description
+     * Changes the way data arrives to the client, with only one value supported by $[pg]:
+     *  - `rowMode = 'array'` will make all data rows arrive as arrays of values.
+     *    By default, rows arrive as objects.
+     */
+    Object.defineProperty(this, 'rowMode', {
+        get() {
+            return state.rowMode;
+        },
+        set(value) {
+            if (value !== state.rowMode) {
+                state.rowMode = value;
+                changed = true;
+            }
+        }
+    });
+
+    /**
+     * @name PreparedStatement#rows
+     * @type {number}
+     * @description
+     * Number of rows to return at a time from a Prepared Statement's portal.
+     * The default is 0, which means that all rows must be returned at once.
+     */
+    Object.defineProperty(this, 'rows', {
+        get() {
+            return state.rows;
+        },
+        set(value) {
+            if (value !== state.rows) {
+                state.rows = value;
+                changed = true;
+            }
+        }
+    });
+
+    /**
+     * @name PreparedStatement#error
+     * @type {errors.PreparedStatementError}
+     * @default undefined
+     * @description
+     * When in an error state, it is set to a {@link errors.PreparedStatementError PreparedStatementError} object. Otherwise, it is `undefined`.
+     *
+     * This property is primarily for internal use by the library.
+     */
+    Object.defineProperty(this, 'error', {
+        get() {
+            return currentError;
+        }
+    });
+
+    if (npm.utils.isObject(name, ['name'])) {
+        state.name = name.name;
+        state.text = name.text;
+        state.binary = name.binary;
+        state.rowMode = name.rowMode;
+        state.rows = name.rows;
+        setValues(name.values);
+    }
+
+    /**
+     * @method PreparedStatement#parse
+     * @description
+     * Parses the current object and returns a simple `{name, text, values}`, if successful,
+     * or else it returns a {@link errors.PreparedStatementError PreparedStatementError} object.
+     *
+     * This method is primarily for internal use by the library.
+     *
+     * @returns {{name, text, values}|errors.PreparedStatementError}
+     */
+    this.parse = () => {
+
+        const qf = state.text instanceof npm.QueryFile ? state.text : null;
+
+        if (!changed && !qf) {
+            return PS;
+        }
+
+        const errors = [], values = PS.values;
+        PS = {
+            name: state.name
+        };
+        changed = true;
+        currentError = undefined;
+
+        if (!npm.utils.isText(PS.name)) {
+            errors.push('Property \'name\' must be a non-empty text string.');
+        }
+
+        if (qf) {
+            qf.prepare();
+            if (qf.error) {
+                PS.text = state.text;
+                errors.push(qf.error);
+            } else {
+                PS.text = qf[npm.QueryFile.$query];
+            }
+        } else {
+            PS.text = state.text;
+        }
+        if (!npm.utils.isText(PS.text)) {
+            errors.push('Property \'text\' must be a non-empty text string.');
+        }
+
+        if (!npm.utils.isNull(values)) {
+            PS.values = values;
+        }
+
+        if (state.binary !== undefined) {
+            PS.binary = state.binary;
+        }
+
+        if (state.rowMode !== undefined) {
+            PS.rowMode = state.rowMode;
+        }
+
+        if (state.rows !== undefined) {
+            PS.rows = state.rows;
+        }
+
+        if (errors.length) {
+            return currentError = new npm.errors.PreparedStatementError(errors[0], PS);
+        }
+
+        changed = false;
+
+        return PS;
+    };
+}
+
+/**
+ * @method PreparedStatement#toString
+ * @description
+ * Creates a well-formatted multi-line string that represents the object's current state.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * @param {number} [level=0]
+ * Nested output level, to provide visual offset.
+ *
+ * @returns {string}
+ */
+PreparedStatement.prototype.toString = function (level) {
+    level = level > 0 ? parseInt(level) : 0;
+    const gap = npm.utils.messageGap(level + 1);
+    const ps = this.parse();
+    const lines = [
+        'PreparedStatement {',
+        gap + 'name: ' + JSON.stringify(this.name)
+    ];
+    if (npm.utils.isText(ps.text)) {
+        lines.push(gap + 'text: "' + ps.text + '"');
+    }
+    if (this.values !== undefined) {
+        lines.push(gap + 'values: ' + JSON.stringify(this.values));
+    }
+    if (this.binary !== undefined) {
+        lines.push(gap + 'binary: ' + JSON.stringify(this.binary));
+    }
+    if (this.rowMode !== undefined) {
+        lines.push(gap + 'rowMode: ' + JSON.stringify(this.rowMode));
+    }
+    if (this.rows !== undefined) {
+        lines.push(gap + 'rows: ' + JSON.stringify(this.rows));
+    }
+    if (this.error) {
+        lines.push(gap + 'error: ' + this.error.toString(level + 1));
+    }
+    lines.push(npm.utils.messageGap(level) + '}');
+    return lines.join(npm.os.EOL);
+};
+
+module.exports = PreparedStatement;
+
+
+/***/ }),
+/* 100 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    os: __webpack_require__(2),
+    utils: __webpack_require__(0),
+    errors: __webpack_require__(19),
+    QueryFile: __webpack_require__(10)
+};
+
+/**
+ * @class ParameterizedQuery
+ * @description
+ * **Alternative Syntax:** `ParameterizedQuery({text, values, ...})` &#8658; {@link ParameterizedQuery}
+ *
+ * Constructs a new {@link ParameterizedQuery} object.
+ *
+ * The alternative syntax supports advanced properties {@link ParameterizedQuery#binary binary} and {@link ParameterizedQuery#rowMode rowMode},
+ * which are passed into $[pg], but not used by the class.
+ *
+ * All properties can also be set after the object's construction.
+ *
+ * This type extends the basic `{text, values}` object, by replacing it, i.e. when the basic object is used
+ * with a query method, a new {@link ParameterizedQuery} object is created implicitly in its place.
+ *
+ * The type can be used in place of the `query` parameter, with any query method directly. And it never throws any error,
+ * leaving it for query methods to reject with {@link errors.ParameterizedQueryError ParameterizedQueryError}.
+ *
+ * The type is available from the library's root: `pgp.ParameterizedQuery`.
+ *
+ * @param {string|QueryFile} text
+ * A non-empty query string or a {@link QueryFile} object.
+ *
+ * Only the basic variables (`$1`, `$2`, etc) can be used in the query, because _Parameterized Queries_ are formatted by the database server.
+ *
+ * @param {array} [values]
+ * Query formatting values. When it is not an `Array` and not `null`/`undefined`, it is automatically wrapped into an array.
+ *
+ * @returns {ParameterizedQuery}
+ *
+ * @see
+ * {@link errors.ParameterizedQueryError ParameterizedQueryError}
+ *
+ * @example
+ *
+ * const PQ = require('pg-promise').ParameterizedQuery;
+ *
+ * // Creating a complete Parameterized Query with parameters:
+ * const findUser = new PQ('SELECT * FROM Users WHERE id = $1', [123]);
+ *
+ * db.one(findUser)
+ *     .then(user => {
+ *         // user found;
+ *     })
+ *     .catch(error => {
+ *         // error;
+ *     });
+ *
+ * @example
+ *
+ * const PQ = require('pg-promise').ParameterizedQuery;
+ *
+ * // Creating a reusable Parameterized Query without values:
+ * const addUser = new PQ('INSERT INTO Users(name, age) VALUES($1, $2)');
+ *
+ * // setting values explicitly:
+ * addUser.values = ['John', 30];
+ *
+ * db.none(addUser)
+ *     .then(() => {
+ *         // user added;
+ *     })
+ *     .catch(error=> {
+ *         // error;
+ *     });
+ *
+ * // setting values implicitly, by passing them into the query method:
+ * db.none(addUser, ['Mike', 25])
+ *     .then(() => {
+ *         // user added;
+ *     })
+ *     .catch(error=> {
+ *         // error;
+ *     });
+ *
+ */
+function ParameterizedQuery(text, values) {
+    if (!(this instanceof ParameterizedQuery)) {
+        return new ParameterizedQuery(text, values);
+    }
+
+    let currentError, PQ = {}, changed = true;
+    const state = {
+        text,
+        binary: undefined,
+        rowMode: undefined
+    };
+
+    function setValues(v) {
+        if (Array.isArray(v)) {
+            if (v.length) {
+                PQ.values = v;
+            } else {
+                delete PQ.values;
+            }
+        } else {
+            if (npm.utils.isNull(v)) {
+                delete PQ.values;
+            } else {
+                PQ.values = [v];
+            }
+        }
+    }
+
+    setValues(values);
+
+    /**
+     * @name ParameterizedQuery#text
+     * @type {string|QueryFile}
+     * @description
+     * A non-empty query string or a {@link QueryFile} object.
+     */
+    Object.defineProperty(this, 'text', {
+        get() {
+            return state.text;
+        },
+        set(value) {
+            if (value !== state.text) {
+                state.text = value;
+                changed = true;
+            }
+        }
+    });
+
+    /**
+     * @name ParameterizedQuery#values
+     * @type {array}
+     * @description
+     * Query formatting parameters, depending on the type:
+     *
+     * - `null` / `undefined` means the query has no formatting parameters
+     * - `Array` - it is an array of formatting parameters
+     * - None of the above, means it is a single formatting value, which
+     *   is then automatically wrapped into an array
+     */
+    Object.defineProperty(this, 'values', {
+        get() {
+            return PQ.values;
+        },
+        set(value) {
+            setValues(value);
+        }
+    });
+
+    /**
+     * @name ParameterizedQuery#binary
+     * @type {boolean}
+     * @default undefined
+     * @description
+     * Activates binary result mode. The default is the text mode.
+     *
+     * @see {@link http://www.postgresql.org/docs/devel/static/protocol-flow.html#PROTOCOL-FLOW-EXT-QUERY Extended Query}
+     */
+    Object.defineProperty(this, 'binary', {
+        get() {
+            return state.binary;
+        },
+        set(value) {
+            if (value !== state.binary) {
+                state.binary = value;
+                changed = true;
+            }
+        }
+    });
+
+    /**
+     * @name ParameterizedQuery#rowMode
+     * @type {string}
+     * @default undefined
+     * @description
+     * Changes the way data arrives to the client, with only one value supported by $[pg]:
+     *  - `rowMode = 'array'` will make all data rows arrive as arrays of values.
+     *    By default, rows arrive as objects.
+     */
+    Object.defineProperty(this, 'rowMode', {
+        get() {
+            return state.rowMode;
+        },
+        set(value) {
+            if (value !== state.rowMode) {
+                state.rowMode = value;
+                changed = true;
+            }
+        }
+    });
+
+    /**
+     * @name ParameterizedQuery#error
+     * @type {errors.ParameterizedQueryError}
+     * @default undefined
+     * @readonly
+     * @description
+     * When in an error state, it is set to a {@link errors.ParameterizedQueryError ParameterizedQueryError} object. Otherwise, it is `undefined`.
+     *
+     * This property is primarily for internal use by the library.
+     */
+    Object.defineProperty(this, 'error', {
+        get() {
+            return currentError;
+        }
+    });
+
+    if (npm.utils.isObject(text, ['text'])) {
+        state.text = text.text;
+        state.binary = text.binary;
+        state.rowMode = text.rowMode;
+        setValues(text.values);
+    }
+
+    /**
+     * @method ParameterizedQuery#parse
+     * @description
+     * Parses the current object and returns a simple `{text, values}`, if successful,
+     * or else it returns a {@link errors.ParameterizedQueryError ParameterizedQueryError} object.
+     *
+     * This method is primarily for internal use by the library.
+     *
+     * @returns {{text, values}|errors.ParameterizedQueryError}
+     */
+    this.parse = () => {
+
+        const qf = state.text instanceof npm.QueryFile ? state.text : null;
+
+        if (!changed && !qf) {
+            return PQ;
+        }
+
+        const errors = [], values = PQ.values;
+        PQ = {
+            name: state.name
+        };
+        changed = true;
+        currentError = undefined;
+
+        if (qf) {
+            qf.prepare();
+            if (qf.error) {
+                PQ.text = state.text;
+                errors.push(qf.error);
+            } else {
+                PQ.text = qf[npm.QueryFile.$query];
+            }
+        } else {
+            PQ.text = state.text;
+        }
+        if (!npm.utils.isText(PQ.text)) {
+            errors.push('Property \'text\' must be a non-empty text string.');
+        }
+
+        if (!npm.utils.isNull(values)) {
+            PQ.values = values;
+        }
+
+        if (state.binary !== undefined) {
+            PQ.binary = state.binary;
+        }
+
+        if (state.rowMode !== undefined) {
+            PQ.rowMode = state.rowMode;
+        }
+
+        if (errors.length) {
+            return currentError = new npm.errors.ParameterizedQueryError(errors[0], PQ);
+        }
+
+        changed = false;
+
+        return PQ;
+    };
+}
+
+/**
+ * @method ParameterizedQuery#toString
+ * @description
+ * Creates a well-formatted multi-line string that represents the object's current state.
+ *
+ * It is called automatically when writing the object into the console.
+ *
+ * @param {number} [level=0]
+ * Nested output level, to provide visual offset.
+ *
+ * @returns {string}
+ */
+ParameterizedQuery.prototype.toString = function (level) {
+    level = level > 0 ? parseInt(level) : 0;
+    const gap = npm.utils.messageGap(level + 1);
+    const pq = this.parse();
+    const lines = [
+        'ParameterizedQuery {'
+    ];
+    if (npm.utils.isText(pq.text)) {
+        lines.push(gap + 'text: "' + pq.text + '"');
+    }
+    if (this.values !== undefined) {
+        lines.push(gap + 'values: ' + JSON.stringify(this.values));
+    }
+    if (this.binary !== undefined) {
+        lines.push(gap + 'binary: ' + JSON.stringify(this.binary));
+    }
+    if (this.rowMode !== undefined) {
+        lines.push(gap + 'rowMode: ' + JSON.stringify(this.rowMode));
+    }
+    if (this.error !== undefined) {
+        lines.push(gap + 'error: ' + this.error.toString(level + 1));
+    }
+    lines.push(npm.utils.messageGap(level) + '}');
+    return lines.join(npm.os.EOL);
+};
+
+module.exports = ParameterizedQuery;
+
+
+/***/ }),
+/* 101 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    result: __webpack_require__(22),
+    special: __webpack_require__(43),
+    Context: __webpack_require__(102),
+    events: __webpack_require__(12),
+    utils: __webpack_require__(0),
+    pubUtils: __webpack_require__(37),
+    connect: __webpack_require__(103),
+    dbPool: __webpack_require__(42),
+    query: __webpack_require__(44),
+    task: __webpack_require__(105),
+    text: __webpack_require__(6)
+};
+
+/**
+ * @class Database
+ * @description
+ *
+ * Represents the database protocol, extensible via event {@link event:extend extend}.
+ * This type is not available directly, it can only be created via the library's base call.
+ *
+ * **IMPORTANT:**
+ *
+ * For any given connection, you should only create a single {@link Database} object in a separate module,
+ * to be shared in your application (see the code example below). If instead you keep creating the {@link Database}
+ * object dynamically, your application will suffer from loss in performance, and will be getting a warning in a
+ * development environment (when `NODE_ENV` = `development`):
+ *
+ * `WARNING: Creating a duplicate database object for the same connection.`
+ *
+ * If you ever see this warning, rectify your {@link Database} object initialization, so there is only one object
+ * per connection details. See the example provided below.
+ *
+ * See also: property `noWarnings` in {@link module:pg-promise Initialization Options}.
+ *
+ * Note however, that in special cases you may need to re-create the database object, if its connection pool has been
+ * shut-down externally. And in this case the library won't be showing any warning.
+ *
+ * @param {string|object} cn
+ * Database connection details, which can be:
+ *
+ * - a configuration object
+ * - a connection string
+ *
+ * For details see {@link https://github.com/vitaly-t/pg-promise/wiki/Connection-Syntax Connection Syntax}.
+ *
+ * The value can be accessed from the database object via property {@link Database.$cn $cn}.
+ *
+ * @param {*} [dc]
+ * Database Context.
+ *
+ * Any object or value to be propagated through the protocol, to allow implementations and event handling
+ * that depend on the database context.
+ *
+ * This is mainly to facilitate the use of multiple databases which may need separate protocol extensions,
+ * or different implementations within a single task / transaction callback, depending on the database context.
+ *
+ * This parameter also adds uniqueness to the connection context that's used in combination with the connection
+ * parameters, i.e. use of unique database context will prevent getting the warning about creating a duplicate
+ * Database object.
+ *
+ * The value can be accessed from the database object via property {@link Database#$dc $dc}.
+ *
+ * @returns {Database}
+ *
+ * @see
+ *
+ * {@link Database#query query},
+ * {@link Database#none none},
+ * {@link Database#one one},
+ * {@link Database#oneOrNone oneOrNone},
+ * {@link Database#many many},
+ * {@link Database#manyOrNone manyOrNone},
+ * {@link Database#any any},
+ * {@link Database#func func},
+ * {@link Database#proc proc},
+ * {@link Database#result result},
+ * {@link Database#multiResult multiResult},
+ * {@link Database#multi multi},
+ * {@link Database#map map},
+ * {@link Database#each each},
+ * {@link Database#stream stream},
+ * {@link Database#task task},
+ * {@link Database#taskIf taskIf},
+ * {@link Database#tx tx},
+ * {@link Database#txIf txIf},
+ * {@link Database#connect connect},
+ * {@link Database#$config $config},
+ * {@link Database#$cn $cn},
+ * {@link Database#$dc $dc},
+ * {@link Database#$pool $pool},
+ * {@link event:extend extend}
+ *
+ * @example
+ * // Proper way to initialize and share the Database object
+ *
+ * // Loading and initializing the library:
+ * const pgp = require('pg-promise')({
+ *     // Initialization Options
+ * });
+ *
+ * // Preparing the connection details:
+ * const cn = 'postgres://username:password@host:port/database';
+ *
+ * // Creating a new database instance from the connection details:
+ * const db = pgp(cn);
+ *
+ * // Exporting the database object for shared use:
+ * module.exports = db;
+ */
+function Database(cn, dc, config) {
+
+    const dbThis = this,
+        $p = config.promise,
+        poolConnection = typeof cn === 'string' ? {connectionString: cn} : cn,
+        pool = new config.pgp.pg.Pool(poolConnection),
+        endMethod = pool.end;
+
+    let destroyed;
+
+    pool.end = cb => {
+        const res = endMethod.call(pool, cb);
+        dbThis.$destroy();
+        return res;
+    };
+
+    pool.on('error', onError);
+
+    /**
+     * @method Database#connect
+     *
+     * @description
+     * Acquires a new or existing connection, depending on the current state of the connection pool, and parameter `direct`.
+     *
+     * This method creates a shared connection for executing a chain of queries against it. The connection must be released
+     * in the end of the chain by calling method `done()` on the connection object.
+     *
+     * This is an obsolete, low-level approach to chaining queries on the same connection. A newer and safer approach is via
+     * methods {@link Database#task task} and {@link Database#tx tx} (for transactions), which allocate and release a shared
+     * connection automatically.
+     *
+     * **NOTE:** Even though this method exposes a {@link external:Client Client} object via property `client`,
+     * you cannot call `client.end()` directly, or it will print an error into the console:
+     * `Abnormal client.end() call, due to invalid code or failed server connection.`
+     * You should only call method `done()` to release the connection.
+     *
+     * @param {object} [options]
+     * Connection Options.
+     *
+     * @param {boolean} [options.direct=false]
+     * Creates a new connection directly, through the {@link external:Client Client}, bypassing the connection pool.
+     *
+     * By default, all connections are acquired from the connection pool. If you set this option however, the library will instead
+     * create a new {@link external:Client Client} object directly (separately from the pool), and then call its `connect` method.
+     *
+     * **WARNING:**
+     *
+     * Do not use this option for regular query execution, because it exclusively occupies one physical connection,
+     * and therefore cannot scale. This option is only suitable for global connection usage, such as event listeners.
+     *
+     * @param {function} [options.onLost]
+     * Notification callback of the lost/broken connection, called with the following parameters:
+     *  - `err` - the original connectivity error
+     *  - `e` - error context object, which contains:
+     *    - `cn` - safe connection string/config (with the password hashed);
+     *    - `dc` - Database Context, as was used during {@link Database} construction;
+     *    - `start` - Date/Time (`Date` type) when the connection was established;
+     *    - `client` - {@link external:Client Client} object that has lost the connection.
+     *
+     * The notification is mostly valuable with `direct: true`, to be able to re-connect direct/permanent connections by calling
+     * method {@link Database#connect connect} again.
+     *
+     * You do not need to call `done` on lost connections, as it happens automatically. However, if you had event listeners
+     * set up on the connection's `client` object, you should remove them to avoid leaks:
+     *
+     * ```js
+     * function onLostConnection(err, e) {
+     *     e.client.removeListener('my-event', myHandler);
+     * }
+     * ```
+     *
+     * For a complete example see $[Robust Listeners].
+     *
+     * @returns {external:Promise}
+     * A promise object that represents the connection result:
+     *  - resolves with the complete {@link Database} protocol, extended with:
+     *    - property `client` of type {@link external:Client Client} that represents the open connection
+     *    - method `done()` that must be called in the end, in order to release the connection
+     *    - methods `batch`, `page` and `sequence`, same as inside a {@link Task}
+     *  - rejects with a connection-related error when it fails to connect.
+     *
+     * @see
+     * {@link Database#task Database.task},
+     * {@link Database#taskIf Database.taskIf},
+     * {@link Database#tx Database.tx},
+     * {@link Database#txIf Database.txIf}
+     *
+     * @example
+     *
+     * let sco; // shared connection object;
+     *
+     * db.connect()
+     *     .then(obj => {
+     *         // obj.client = new connected Client object;
+     *
+     *         sco = obj; // save the connection object;
+     *
+     *         // execute all the queries you need:
+     *         return sco.any('SELECT * FROM Users');
+     *     })
+     *     .then(data => {
+     *         // success
+     *     })
+     *     .catch(error => {
+     *         // error
+     *     })
+     *     .finally(() => {
+     *         // release the connection, if it was successful:
+     *         if (sco) {
+     *             sco.done();
+     *         }
+     *     });
+     *
+     */
+    this.connect = function (options) {
+        options = options || {};
+        const ctx = createContext();
+        ctx.cnOptions = options;
+        const self = {
+            // Generic query method:
+            query(query, values, qrm) {
+                if (!ctx.db) {
+                    return $p.reject(new Error(npm.text.queryDisconnected));
+                }
+                return config.$npm.query.call(this, ctx, query, values, qrm);
+            },
+            // Connection release method:
+            done() {
+                if (!ctx.db) {
+                    throw new Error(npm.text.looseQuery);
+                }
+                ctx.disconnect();
+            },
+            batch(values, options) {
+                return config.$npm.spex.batch.call(this, values, options);
+            },
+            page(source, options) {
+                return config.$npm.spex.page.call(this, source, options);
+            },
+            sequence(source, options) {
+                return config.$npm.spex.sequence.call(this, source, options);
+            }
+        };
+        const connection = options.direct ? config.$npm.connect.direct(ctx) : config.$npm.connect.pool(ctx, dbThis);
+        return connection
+            .then(db => {
+                ctx.connect(db);
+                self.client = db.client;
+                extend(ctx, self);
+                return self;
+            });
+    };
+
+    /**
+     * @method Database#query
+     *
+     * @description
+     * Base query method that executes a generic query, expecting the return data according to parameter `qrm`.
+     *
+     * It performs the following steps:
+     *
+     *  1. Validates and formats the query via {@link formatting.format as.format}, according to the `query` and `values` passed in;
+     *  2. For a root-level query (against the {@link Database} object), it requests a new connection from the pool;
+     *  3. Executes the query;
+     *  4. For a root-level query (against the {@link Database} object), it releases the connection back to the pool;
+     *  5. Resolves/rejects, according to the data returned from the query and the value of `qrm`.
+     *
+     * Direct use of this method is not suitable for chaining queries, for performance reasons. It should be done
+     * through either task or transaction context, see $[Chaining Queries].
+     *
+     * When receiving a multi-query result, only the last result is processed, ignoring the rest.
+     *
+     * @param {string|function|object} query
+     * Query to be executed, which can be any of the following types:
+     * - A non-empty query string
+     * - A function that returns a query string or another function, i.e. recursive resolution
+     *   is supported, passing in `values` as `this`, and as the first parameter.
+     * - Prepared Statement `{name, text, values, ...}` or {@link PreparedStatement} object
+     * - Parameterized Query `{text, values, ...}` or {@link ParameterizedQuery} object
+     * - {@link QueryFile} object
+     *
+     * @param {array|value} [values]
+     * Query formatting parameters.
+     *
+     * When `query` is of type `string` or a {@link QueryFile} object, the `values` can be:
+     * - a single value - to replace all `$1` occurrences
+     * - an array of values - to replace all `$1`, `$2`, ... variables
+     * - an object - to apply $[Named Parameters] formatting
+     *
+     * When `query` is a Prepared Statement or a Parameterized Query (or their class types),
+     * and `values` is not `null` or `undefined`, it is automatically set within such object,
+     * as an override for its internal `values`.
+     *
+     * @param {queryResult} [qrm=queryResult.any]
+     * {@link queryResult Query Result Mask}
+     *
+     * @returns {external:Promise}
+     * A promise object that represents the query result according to `qrm`.
+     */
+    this.query = function (query, values, qrm) {
+        const self = this, ctx = createContext();
+        return config.$npm.connect.pool(ctx, dbThis)
+            .then(db => {
+                ctx.connect(db);
+                return config.$npm.query.call(self, ctx, query, values, qrm);
+            })
+            .then(data => {
+                ctx.disconnect();
+                return data;
+            })
+            .catch(error => {
+                ctx.disconnect();
+                return $p.reject(error);
+            });
+    };
+
+    /**
+     * @member {object} Database#$config
+     * @readonly
+     * @description
+     * This is a hidden property, to help integrating type {@link Database} directly with third-party libraries.
+     *
+     * Properties available in the object:
+     * - `pgp` - instance of the entire library after initialization
+     * - `options` - the library's {@link module:pg-promise Initialization Options} object
+     * - `promiseLib` - instance of the promise library that's used
+     * - `promise` - generic promise interface that uses `promiseLib` via 4 basic methods:
+     *   - `promise((resolve, reject) => {})` - to create a new promise
+     *   - `promise.resolve(value)` - to resolve with a value
+     *   - `promise.reject(reason)` - to reject with a reason
+     *   - `promise.all(iterable)` - to resolve an iterable list of promises
+     * - `version` - this library's version
+     * - `$npm` _(hidden property)_ - internal module cache
+     *
+     * @example
+     *
+     * // Using the promise protocol as configured by pg-promise:
+     *
+     * const $p = db.$config.promise;
+     *
+     * const resolvedPromise = $p.resolve('some data');
+     * const rejectedPromise = $p.reject('some reason');
+     *
+     * const newPromise = $p((resolve, reject) => {
+     *     // call either resolve(data) or reject(reason) here
+     * });
+     */
+    npm.utils.addReadProp(this, '$config', config, true);
+
+    /**
+     * @member {string|object} Database#$cn
+     * @readonly
+     * @description
+     * Database connection, as was passed in during the object's construction.
+     *
+     * This is a hidden property, to help integrating type {@link Database} directly with third-party libraries.
+     *
+     * @see Database
+     */
+    npm.utils.addReadProp(this, '$cn', cn, true);
+
+    /**
+     * @member {*} Database#$dc
+     * @readonly
+     * @description
+     * Database Context, as was passed in during the object's construction.
+     *
+     * This is a hidden property, to help integrating type {@link Database} directly with third-party libraries.
+     *
+     * @see Database
+     */
+    npm.utils.addReadProp(this, '$dc', dc, true);
+
+    /**
+     * @member {external:pg-pool} Database#$pool
+     * @readonly
+     * @description
+     * A $[pg-pool] object associated with the database object, as each {@link Database} creates its own $[pg-pool] instance.
+     *
+     * This is a hidden property, primarily for integrating type {@link Database} with third-party libraries that support
+     * $[pg-pool] directly. Note however, that if you pass the pool object into a library that calls `pool.end()`, you will no longer be able
+     * to use this {@link Database} object, and each query method will be rejecting with {@link external:Error Error} =
+     * `Connection pool of the database object has been destroyed.`
+     *
+     * You can also use this object to shut down the pool, by calling `$pool.end()`.
+     *
+     * For more details see $[Library de-initialization].
+     *
+     * @see
+     * {@link Database}
+     * {@link module:pg-promise~end pgp.end}
+     *
+     * @example
+     *
+     * // Shutting down the connection pool of this database object,
+     * // after all queries have finished in a run-though process:
+     *
+     * .then(() => {}) // processing the data
+     * .catch() => {}) // handling the error
+     * .finally(db.$pool.end); // shutting down the pool
+     *
+     */
+    npm.utils.addReadProp(this, '$pool', pool, true);
+
+    /**
+     * @member {function} Database.$destroy
+     * @readonly
+     * @private
+     * @description
+     * Permanently shuts down the database object.
+     */
+    npm.utils.addReadProp(this, '$destroy', () => {
+        if (!destroyed) {
+            if (!pool.ending) {
+                endMethod.call(pool);
+            }
+            npm.dbPool.unregister(dbThis);
+            pool.removeListener('error', onError);
+            destroyed = true;
+        }
+    }, true);
+
+    npm.dbPool.register(this);
+
+    extend(createContext(), this); // extending root protocol;
+
+    function createContext() {
+        return new npm.Context({cn, dc, options: config.options});
+    }
+
+    function transform(value, cb, thisArg) {
+        if (typeof cb === 'function') {
+            value = value.then(data => {
+                return cb.call(thisArg, data);
+            });
+        }
+        return value;
+    }
+
+    ////////////////////////////////////////////////////
+    // Injects additional methods into an access object,
+    // extending the protocol's base method 'query'.
+    function extend(ctx, obj) {
+
+        /**
+         * @method Database#none
+         * @description
+         * Executes a query that expects no data to be returned. If the query returns any kind of data,
+         * the method rejects.
+         *
+         * When receiving a multi-query result, only the last result is processed, ignoring the rest.
+         *
+         * @param {string|function|object} query
+         * Query to be executed, which can be any of the following types:
+         * - A non-empty query string
+         * - A function that returns a query string or another function, i.e. recursive resolution
+         *   is supported, passing in `values` as `this`, and as the first parameter.
+         * - Prepared Statement `{name, text, values, ...}` or {@link PreparedStatement} object
+         * - Parameterized Query `{text, values, ...}` or {@link ParameterizedQuery} object
+         * - {@link QueryFile} object
+         *
+         * @param {array|value} [values]
+         * Query formatting parameters.
+         *
+         * When `query` is of type `string` or a {@link QueryFile} object, the `values` can be:
+         * - a single value - to replace all `$1` occurrences
+         * - an array of values - to replace all `$1`, `$2`, ... variables
+         * - an object - to apply $[Named Parameters] formatting
+         *
+         * When `query` is a Prepared Statement or a Parameterized Query (or their class types),
+         * and `values` is not `null` or `undefined`, it is automatically set within such object,
+         * as an override for its internal `values`.
+         *
+         * @returns {external:Promise<null>}
+         * A promise object that represents the query result:
+         * - When no records are returned, it resolves with `null`.
+         * - When any data is returned, it rejects with {@link errors.QueryResultError QueryResultError}:
+         *   - `.message` = `No return data was expected.`
+         *   - `.code` = {@link errors.queryResultErrorCode.notEmpty queryResultErrorCode.notEmpty}
+         */
+        obj.none = function (query, values) {
+            return obj.query.call(this, query, values, npm.result.none);
+        };
+
+        /**
+         * @method Database#one
+         * @description
+         * Executes a query that expects exactly one row of data. When 0 or more than 1 rows are returned,
+         * the method rejects.
+         *
+         * When receiving a multi-query result, only the last result is processed, ignoring the rest.
+         *
+         * @param {string|function|object} query
+         * Query to be executed, which can be any of the following types:
+         * - A non-empty query string
+         * - A function that returns a query string or another function, i.e. recursive resolution
+         *   is supported, passing in `values` as `this`, and as the first parameter.
+         * - Prepared Statement `{name, text, values, ...}` or {@link PreparedStatement} object
+         * - Parameterized Query `{text, values, ...}` or {@link ParameterizedQuery} object
+         * - {@link QueryFile} object
+         *
+         * @param {array|value} [values]
+         * Query formatting parameters.
+         *
+         * When `query` is of type `string` or a {@link QueryFile} object, the `values` can be:
+         * - a single value - to replace all `$1` occurrences
+         * - an array of values - to replace all `$1`, `$2`, ... variables
+         * - an object - to apply $[Named Parameters] formatting
+         *
+         * When `query` is a Prepared Statement or a Parameterized Query (or their class types),
+         * and `values` is not `null` or `undefined`, it is automatically set within such object,
+         * as an override for its internal `values`.
+         *
+         * @param {function} [cb]
+         * Value transformation callback, to allow in-line value change.
+         * When specified, the return value replaces the original resolved value.
+         *
+         * The function takes only one parameter - value resolved from the query.
+         *
+         * @param {*} [thisArg]
+         * Value to use as `this` when executing the transformation callback.
+         *
+         * @returns {external:Promise}
+         * A promise object that represents the query result:
+         * - When 1 row is returned, it resolves with that row as a single object.
+         * - When no rows are returned, it rejects with {@link errors.QueryResultError QueryResultError}:
+         *   - `.message` = `No data returned from the query.`
+         *   - `.code` = {@link errors.queryResultErrorCode.noData queryResultErrorCode.noData}
+         * - When multiple rows are returned, it rejects with {@link errors.QueryResultError QueryResultError}:
+         *   - `.message` = `Multiple rows were not expected.`
+         *   - `.code` = {@link errors.queryResultErrorCode.multiple queryResultErrorCode.multiple}
+         * - Resolves with the new value, if transformation callback `cb` was specified.
+         *
+         * @see
+         * {@link Database#oneOrNone oneOrNone}
+         *
+         * @example
+         *
+         * // a query with in-line value transformation:
+         * db.one('INSERT INTO Events VALUES($1) RETURNING id', [123], event => event.id)
+         *     .then(data => {
+         *         // data = a new event id, rather than an object with it
+         *     });
+         *
+         * @example
+         *
+         * // a query with in-line value transformation + conversion:
+         * db.one('SELECT count(*) FROM Users', [], c => +c.count)
+         *     .then(count => {
+         *         // count = a proper integer value, rather than an object with a string
+         *     });
+         *
+         */
+        obj.one = function (query, values, cb, thisArg) {
+            const v = obj.query.call(this, query, values, npm.result.one);
+            return transform(v, cb, thisArg);
+        };
+
+        /**
+         * @method Database#many
+         * @description
+         * Executes a query that expects one or more rows. When the query returns no rows, the method rejects.
+         *
+         * When receiving a multi-query result, only the last result is processed, ignoring the rest.
+         *
+         * @param {string|function|object} query
+         * Query to be executed, which can be any of the following types:
+         * - A non-empty query string
+         * - A function that returns a query string or another function, i.e. recursive resolution
+         *   is supported, passing in `values` as `this`, and as the first parameter.
+         * - Prepared Statement `{name, text, values, ...}` or {@link PreparedStatement} object
+         * - Parameterized Query `{text, values, ...}` or {@link ParameterizedQuery} object
+         * - {@link QueryFile} object
+         *
+         * @param {array|value} [values]
+         * Query formatting parameters.
+         *
+         * When `query` is of type `string` or a {@link QueryFile} object, the `values` can be:
+         * - a single value - to replace all `$1` occurrences
+         * - an array of values - to replace all `$1`, `$2`, ... variables
+         * - an object - to apply $[Named Parameters] formatting
+         *
+         * When `query` is a Prepared Statement or a Parameterized Query (or their class types),
+         * and `values` is not `null` or `undefined`, it is automatically set within such object,
+         * as an override for its internal `values`.
+         *
+         * @returns {external:Promise}
+         * A promise object that represents the query result:
+         * - When 1 or more rows are returned, it resolves with the array of rows.
+         * - When no rows are returned, it rejects with {@link errors.QueryResultError QueryResultError}:
+         *   - `.message` = `No data returned from the query.`
+         *   - `.code` = {@link errors.queryResultErrorCode.noData queryResultErrorCode.noData}
+         */
+        obj.many = function (query, values) {
+            return obj.query.call(this, query, values, npm.result.many);
+        };
+
+        /**
+         * @method Database#oneOrNone
+         * @description
+         * Executes a query that expects 0 or 1 rows. When the query returns more than 1 row, the method rejects.
+         *
+         * When receiving a multi-query result, only the last result is processed, ignoring the rest.
+         *
+         * @param {string|function|object} query
+         * Query to be executed, which can be any of the following types:
+         * - A non-empty query string
+         * - A function that returns a query string or another function, i.e. recursive resolution
+         *   is supported, passing in `values` as `this`, and as the first parameter.
+         * - Prepared Statement `{name, text, values, ...}` or {@link PreparedStatement} object
+         * - Parameterized Query `{text, values, ...}` or {@link ParameterizedQuery} object
+         * - {@link QueryFile} object
+         *
+         * @param {array|value} [values]
+         * Query formatting parameters.
+         *
+         * When `query` is of type `string` or a {@link QueryFile} object, the `values` can be:
+         * - a single value - to replace all `$1` occurrences
+         * - an array of values - to replace all `$1`, `$2`, ... variables
+         * - an object - to apply $[Named Parameters] formatting
+         *
+         * When `query` is a Prepared Statement or a Parameterized Query (or their class types),
+         * and `values` is not `null` or `undefined`, it is automatically set within such object,
+         * as an override for its internal `values`.
+         *
+         * @param {function} [cb]
+         * Value transformation callback, to allow in-line value change.
+         * When specified, the return value replaces the original resolved value.
+         *
+         * The function takes only one parameter - value resolved from the query.
+         *
+         * @param {*} [thisArg]
+         * Value to use as `this` when executing the transformation callback.
+         *
+         * @returns {external:Promise}
+         * A promise object that represents the query result:
+         * - When no rows are returned, it resolves with `null`.
+         * - When 1 row is returned, it resolves with that row as a single object.
+         * - When multiple rows are returned, it rejects with {@link errors.QueryResultError QueryResultError}:
+         *   - `.message` = `Multiple rows were not expected.`
+         *   - `.code` = {@link errors.queryResultErrorCode.multiple queryResultErrorCode.multiple}
+         * - Resolves with the new value, if transformation callback `cb` was specified.
+         *
+         * @see
+         * {@link Database#one one},
+         * {@link Database#none none},
+         * {@link Database#manyOrNone manyOrNone}
+         *
+         * @example
+         *
+         * // a query with in-line value transformation:
+         * db.oneOrNone('SELECT id FROM Events WHERE type = $1', ['entry'], e => e && e.id)
+         *     .then(data => {
+         *         // data = the event id or null (rather than object or null)
+         *     });
+         *
+         */
+        obj.oneOrNone = function (query, values, cb, thisArg) {
+            const v = obj.query.call(this, query, values, npm.result.one | npm.result.none);
+            return transform(v, cb, thisArg);
+        };
+
+        /**
+         * @method Database#manyOrNone
+         * @description
+         * Executes a query that expects any number of rows.
+         *
+         * When receiving a multi-query result, only the last result is processed, ignoring the rest.
+         *
+         * @param {string|function|object} query
+         * Query to be executed, which can be any of the following types:
+         * - A non-empty query string
+         * - A function that returns a query string or another function, i.e. recursive resolution
+         *   is supported, passing in `values` as `this`, and as the first parameter.
+         * - Prepared Statement `{name, text, values, ...}` or {@link PreparedStatement} object
+         * - Parameterized Query `{text, values, ...}` or {@link ParameterizedQuery} object
+         * - {@link QueryFile} object
+         *
+         * @param {array|value} [values]
+         * Query formatting parameters.
+         *
+         * When `query` is of type `string` or a {@link QueryFile} object, the `values` can be:
+         * - a single value - to replace all `$1` occurrences
+         * - an array of values - to replace all `$1`, `$2`, ... variables
+         * - an object - to apply $[Named Parameters] formatting
+         *
+         * When `query` is a Prepared Statement or a Parameterized Query (or their class types),
+         * and `values` is not `null` or `undefined`, it is automatically set within such object,
+         * as an override for its internal `values`.
+         *
+         * @returns {external:Promise<Array>}
+         * A promise object that represents the query result:
+         * - When no rows are returned, it resolves with an empty array.
+         * - When 1 or more rows are returned, it resolves with the array of rows.
+         *
+         * @see
+         * {@link Database#any any},
+         * {@link Database#many many},
+         * {@link Database#none none}
+         *
+         */
+        obj.manyOrNone = function (query, values) {
+            return obj.query.call(this, query, values, npm.result.many | npm.result.none);
+        };
+
+        /**
+         * @method Database#any
+         * @description
+         * Executes a query that expects any number of rows.
+         * This is simply a shorter alias for method {@link Database#manyOrNone manyOrNone}.
+         *
+         * When receiving a multi-query result, only the last result is processed, ignoring the rest.
+         *
+         * @param {string|function|object} query
+         * Query to be executed, which can be any of the following types:
+         * - A non-empty query string
+         * - A function that returns a query string or another function, i.e. recursive resolution
+         *   is supported, passing in `values` as `this`, and as the first parameter.
+         * - Prepared Statement `{name, text, values, ...}` or {@link PreparedStatement} object
+         * - Parameterized Query `{text, values, ...}` or {@link ParameterizedQuery} object
+         * - {@link QueryFile} object
+         *
+         * @param {array|value} [values]
+         * Query formatting parameters.
+         *
+         * When `query` is of type `string` or a {@link QueryFile} object, the `values` can be:
+         * - a single value - to replace all `$1` occurrences
+         * - an array of values - to replace all `$1`, `$2`, ... variables
+         * - an object - to apply $[Named Parameters] formatting
+         *
+         * When `query` is a Prepared Statement or a Parameterized Query (or their class types),
+         * and `values` is not `null` or `undefined`, it is automatically set within such object,
+         * as an override for its internal `values`.
+         *
+         * @returns {external:Promise<Array>}
+         * A promise object that represents the query result:
+         * - When no rows are returned, it resolves with an empty array.
+         * - When 1 or more rows are returned, it resolves with the array of rows.
+         *
+         * @see
+         * {@link Database#manyOrNone manyOrNone},
+         * {@link Database#map map},
+         * {@link Database#each each}
+         *
+         */
+        obj.any = function (query, values) {
+            return obj.query.call(this, query, values, npm.result.any);
+        };
+
+        /**
+         * @method Database#result
+         * @description
+         * Executes a query without any expectation for the return data, to resolve with the
+         * original $[Result] object when successful.
+         *
+         * When receiving a multi-query result, only the last result is processed, ignoring the rest.
+         *
+         * @param {string|function|object} query
+         * Query to be executed, which can be any of the following types:
+         * - A non-empty query string
+         * - A function that returns a query string or another function, i.e. recursive resolution
+         *   is supported, passing in `values` as `this`, and as the first parameter.
+         * - Prepared Statement `{name, text, values, ...}` or {@link PreparedStatement} object
+         * - Parameterized Query `{text, values, ...}` or {@link ParameterizedQuery} object
+         * - {@link QueryFile} object
+         *
+         * @param {array|value} [values]
+         * Query formatting parameters.
+         *
+         * When `query` is of type `string` or a {@link QueryFile} object, the `values` can be:
+         * - a single value - to replace all `$1` occurrences
+         * - an array of values - to replace all `$1`, `$2`, ... variables
+         * - an object - to apply $[Named Parameters] formatting
+         *
+         * When `query` is a Prepared Statement or a Parameterized Query (or their class types),
+         * and `values` is not `null` or `undefined`, it is automatically set within such object,
+         * as an override for its internal `values`.
+         *
+         * @param {function} [cb]
+         * Value transformation callback, to allow in-line value change.
+         * When specified, the return value replaces the original resolved value.
+         *
+         * The function takes only one parameter - value resolved from the query.
+         *
+         * @param {*} [thisArg]
+         * Value to use as `this` when executing the transformation callback.
+         *
+         * @returns {external:Promise}
+         * A promise object that represents the query result:
+         * - resolves with the original $[Result] object (by default);
+         * - resolves with the new value, if transformation callback `cb` was specified.
+         *
+         * @example
+         *
+         * // use of value transformation:
+         * // deleting rows and returning the number of rows deleted
+         * db.result('DELETE FROM Events WHERE id = $1', [123], r => r.rowCount)
+         *     .then(data => {
+         *         // data = number of rows that were deleted
+         *     });
+         *
+         * @example
+         *
+         * // use of value transformation:
+         * // getting only column details from a table
+         * db.result('SELECT * FROM Users LIMIT 0', null, r => r.fields)
+         *     .then(data => {
+         *         // data = array of column descriptors
+         *     });
+         *
+         */
+        obj.result = function (query, values, cb, thisArg) {
+            const v = obj.query.call(this, query, values, npm.special.cache.resultQuery);
+            return transform(v, cb, thisArg);
+        };
+
+        /**
+         * @method Database#multiResult
+         * @description
+         * Executes a multi-query string without any expectation for the return data, to resolve
+         * with an array of the original $[Result] objects when successful.
+         *
+         * This method was added specifically to give access to multi-query results supported
+         * by the $[pg] driver from version 7.x onwards.
+         *
+         * @param {string|function|object} query
+         * Multi-query string to be executed, which can be any of the following types:
+         * - A non-empty string that can contain any number of queries
+         * - A function that returns a query string or another function, i.e. recursive resolution
+         *   is supported, passing in `values` as `this`, and as the first parameter.
+         * - Prepared Statement `{name, text, values, ...}` or {@link PreparedStatement} object
+         * - Parameterized Query `{text, values, ...}` or {@link ParameterizedQuery} object
+         * - {@link QueryFile} object
+         *
+         * @param {array|value} [values]
+         * Query formatting parameters.
+         *
+         * When `query` is of type `string` or a {@link QueryFile} object, the `values` can be:
+         * - a single value - to replace all `$1` occurrences
+         * - an array of values - to replace all `$1`, `$2`, ... variables
+         * - an object - to apply $[Named Parameters] formatting
+         *
+         * When `query` is a Prepared Statement or a Parameterized Query (or their class types),
+         * and `values` is not `null` or `undefined`, it is automatically set within such object,
+         * as an override for its internal `values`.
+         *
+         * @returns {external:Promise<external:Result[]>}
+         *
+         * @see {@link Database#multi multi}
+         *
+         */
+        obj.multiResult = function (query, values) {
+            return obj.query.call(this, query, values, npm.special.cache.multiResultQuery);
+        };
+
+        /**
+         * @method Database#multi
+         * @description
+         * Executes a multi-query string without any expectation for the return data, to resolve
+         * with an array of arrays of rows when successful.
+         *
+         * This method was added specifically to give access to multi-query results supported
+         * by the $[pg] driver from version 7.x onwards.
+         *
+         * @param {string|function|object} query
+         * Multi-query string to be executed, which can be any of the following types:
+         * - A non-empty string that can contain any number of queries
+         * - A function that returns a query string or another function, i.e. recursive resolution
+         *   is supported, passing in `values` as `this`, and as the first parameter.
+         * - Prepared Statement `{name, text, values, ...}` or {@link PreparedStatement} object
+         * - Parameterized Query `{text, values, ...}` or {@link ParameterizedQuery} object
+         * - {@link QueryFile} object
+         *
+         * @param {array|value} [values]
+         * Query formatting parameters.
+         *
+         * When `query` is of type `string` or a {@link QueryFile} object, the `values` can be:
+         * - a single value - to replace all `$1` occurrences
+         * - an array of values - to replace all `$1`, `$2`, ... variables
+         * - an object - to apply $[Named Parameters] formatting
+         *
+         * When `query` is a Prepared Statement or a Parameterized Query (or their class types),
+         * and `values` is not `null` or `undefined`, it is automatically set within such object,
+         * as an override for its internal `values`.
+         *
+         * @returns {external:Promise<Array<Array>>}
+         *
+         * @see {@link Database#multiResult multiResult}
+         *
+         * @example
+         *
+         * db.multi('SELECT * FROM users;SELECT * FROM products')
+         *    .spread((users, products) => {
+         *        // we get data from all queries at once
+         *    })
+         *    .catch(error => {
+         *        // error
+         *    });
+         *
+         */
+        obj.multi = function (query, values) {
+            return obj.query.call(this, query, values, npm.special.cache.multiResultQuery)
+                .then(data => data.map(a => a.rows));
+        };
+
+        /**
+         * @method Database#stream
+         * @description
+         * Custom data streaming, with the help of $[pg-query-stream].
+         *
+         * This method doesn't work with the $[Native Bindings], and if option `pgNative`
+         * is set, it will reject with `Streaming doesn't work with Native Bindings.`
+         *
+         * @param {QueryStream} qs
+         * Stream object of type $[QueryStream].
+         *
+         * @param {Database.streamInitCB} initCB
+         * Stream initialization callback.
+         *
+         * It is invoked with the same `this` context as the calling method.
+         *
+         * @returns {external:Promise}
+         * Result of the streaming operation.
+         *
+         * Once the streaming has finished successfully, the method resolves with
+         * `{processed, duration}`:
+         * - `processed` - total number of rows processed;
+         * - `duration` - streaming duration, in milliseconds.
+         *
+         * Possible rejections messages:
+         * - `Invalid or missing stream object.`
+         * - `Invalid stream state.`
+         * - `Invalid or missing stream initialization callback.`
+         */
+        obj.stream = function (qs, init) {
+            return obj.query.call(this, qs, init, npm.special.cache.streamQuery);
+        };
+
+        /**
+         * @method Database#func
+         * @description
+         * Executes a query against a database function by its name: `SELECT * FROM funcName(values)`.
+         *
+         * @param {string} funcName
+         * Name of the function to be executed.
+         *
+         * @param {array|value} [values]
+         * Parameters for the function - one value or an array of values.
+         *
+         * @param {queryResult} [qrm=queryResult.any] - {@link queryResult Query Result Mask}.
+         *
+         * @returns {external:Promise}
+         *
+         * A promise object as returned from method {@link Database#query query}, according to parameter `qrm`.
+         *
+         * @see
+         * {@link Database#query query},
+         * {@link Database#proc proc}
+         */
+        obj.func = function (funcName, values, qrm) {
+            return obj.query.call(this, {funcName}, values, qrm);
+        };
+
+        /**
+         * @method Database#proc
+         * @description
+         * Executes a query against a stored procedure via its name: `select * from procName(values)`,
+         * expecting back 0 or 1 rows.
+         *
+         * The method simply forwards into {@link Database#func func}`(procName, values, queryResult.one|queryResult.none)`.
+         *
+         * @param {string} procName
+         * Name of the stored procedure to be executed.
+         *
+         * @param {array|value} [values]
+         * Parameters for the procedure - one value or an array of values.
+         *
+         * @param {function} [cb]
+         * Value transformation callback, to allow in-line value change.
+         * When specified, the return value replaces the original resolved value.
+         *
+         * The function takes only one parameter - value resolved from the query.
+         *
+         * @param {*} [thisArg]
+         * Value to use as `this` when executing the transformation callback.
+         *
+         * @returns {external:Promise}
+         *
+         * It calls {@link Database#func func}(`procName`, `values`, `queryResult.one|queryResult.none`),
+         * and then returns the same result as method {@link Database#oneOrNone oneOrNone}.
+         *
+         * And if transformation callback `cb` was specified, it resolves with the new value.
+         *
+         * @see
+         * {@link Database#oneOrNone oneOrNone},
+         * {@link Database#func func}
+         */
+        obj.proc = function (procName, values, cb, thisArg) {
+            const v = obj.func.call(this, procName, values, npm.result.one | npm.result.none);
+            return transform(v, cb, thisArg);
+        };
+
+        /**
+         * @method Database#map
+         * @description
+         * Creates a new array with the results of calling a provided function on every element in the array of rows
+         * resolved by method {@link Database#any any}.
+         *
+         * It is a convenience method to reduce the following code:
+         *
+         * ```js
+         * db.any(query, values)
+         *     .then(data => {
+         *         return data.map((row, index, data) => {
+         *              // return a new element
+         *         });
+         *     });
+         * ```
+         *
+         * When receiving a multi-query result, only the last result is processed, ignoring the rest.
+         *
+         * @param {string|function|object} query
+         * Query to be executed, which can be any of the following types:
+         * - A non-empty query string
+         * - A function that returns a query string or another function, i.e. recursive resolution
+         *   is supported, passing in `values` as `this`, and as the first parameter.
+         * - Prepared Statement `{name, text, values, ...}` or {@link PreparedStatement} object
+         * - Parameterized Query `{text, values, ...}` or {@link ParameterizedQuery} object
+         * - {@link QueryFile} object
+         *
+         * @param {array|value} values
+         * Query formatting parameters.
+         *
+         * When `query` is of type `string` or a {@link QueryFile} object, the `values` can be:
+         * - a single value - to replace all `$1` occurrences
+         * - an array of values - to replace all `$1`, `$2`, ... variables
+         * - an object - to apply $[Named Parameters] formatting
+         *
+         * When `query` is a Prepared Statement or a Parameterized Query (or their class types),
+         * and `values` is not `null` or `undefined`, it is automatically set within such object,
+         * as an override for its internal `values`.
+         *
+         * @param {function} cb
+         * Function that produces an element of the new array, taking three arguments:
+         * - `row` - the current row object being processed in the array
+         * - `index` - the index of the current row being processed in the array
+         * - `data` - the original array of rows resolved by method {@link Database#any any}
+         *
+         * @param {*} [thisArg]
+         * Value to use as `this` when executing the callback.
+         *
+         * @returns {external:Promise<Array>}
+         * Resolves with the new array of values returned from the callback.
+         *
+         * @see
+         * {@link Database#any any},
+         * {@link Database#each each},
+         * {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map Array.map}
+         *
+         * @example
+         *
+         * db.map('SELECT id FROM Users WHERE status = $1', ['active'], row => row.id)
+         *     .then(data => {
+         *         // data = array of active user id-s
+         *     })
+         *     .catch(error => {
+         *        // error
+         *     });
+         *
+         * @example
+         *
+         * db.tx(t => {
+         *     return t.map('SELECT id FROM Users WHERE status = $1', ['active'], row => {
+         *        return t.none('UPDATE Events SET checked = $1 WHERE userId = $2', [true, row.id]);
+         *     }).then(t.batch);
+         * })
+         *     .then(data => {
+         *         // success
+         *     })
+         *     .catch(error => {
+         *         // error
+         *     });
+         *
+         * @example
+         *
+         * // Build a list of active users, each with the list of user events:
+         * db.task(t => {
+         *     return t.map('SELECT id FROM Users WHERE status = $1', ['active'], user => {
+         *         return t.any('SELECT * FROM Events WHERE userId = $1', user.id)
+         *             .then(events=> {
+         *                 user.events = events;
+         *                 return user;
+         *             });
+         *     }).then(t.batch);
+         * })
+         *     .then(data => {
+         *         // success
+         *     })
+         *     .catch(error => {
+         *         // error
+         *     });
+         *
+         */
+        obj.map = function (query, values, cb, thisArg) {
+            return obj.any.call(this, query, values)
+                .then(data => data.map(cb, thisArg));
+        };
+
+        /**
+         * @method Database#each
+         * @description
+         * Executes a provided function once per array element, for an array of rows resolved by method {@link Database#any any}.
+         *
+         * It is a convenience method to reduce the following code:
+         *
+         * ```js
+         * db.any(query, values)
+         *     .then(data => {
+         *         data.forEach((row, index, data) => {
+         *              // process the row
+         *         });
+         *         return data;
+         *     });
+         * ```
+         *
+         * When receiving a multi-query result, only the last result is processed, ignoring the rest.
+         *
+         * @param {string|function|object} query
+         * Query to be executed, which can be any of the following types:
+         * - A non-empty query string
+         * - A function that returns a query string or another function, i.e. recursive resolution
+         *   is supported, passing in `values` as `this`, and as the first parameter.
+         * - Prepared Statement `{name, text, values, ...}` or {@link PreparedStatement} object
+         * - Parameterized Query `{text, values, ...}` or {@link ParameterizedQuery} object
+         * - {@link QueryFile} object
+         *
+         * @param {array|value} [values]
+         * Query formatting parameters.
+         *
+         * When `query` is of type `string` or a {@link QueryFile} object, the `values` can be:
+         * - a single value - to replace all `$1` occurrences
+         * - an array of values - to replace all `$1`, `$2`, ... variables
+         * - an object - to apply $[Named Parameters] formatting
+         *
+         * When `query` is a Prepared Statement or a Parameterized Query (or their class types),
+         * and `values` is not `null` or `undefined`, it is automatically set within such object,
+         * as an override for its internal `values`.
+         *
+         * @param {function} cb
+         * Function to execute for each row, taking three arguments:
+         * - `row` - the current row object being processed in the array
+         * - `index` - the index of the current row being processed in the array
+         * - `data` - the array of rows resolved by method {@link Database#any any}
+         *
+         * @param {*} [thisArg]
+         * Value to use as `this` when executing the callback.
+         *
+         * @returns {external:Promise<Array<Object>>}
+         * Resolves with the original array of rows.
+         *
+         * @see
+         * {@link Database#any any},
+         * {@link Database#map map},
+         * {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/forEach Array.forEach}
+         *
+         * @example
+         *
+         * db.each('SELECT id, code, name FROM Events', [], row => {
+         *     row.code = parseInt(row.code);
+         * })
+         *     .then(data => {
+         *         // data = array of events, with 'code' converted into integer
+         *     })
+         *     .catch(error => {
+         *         // error
+         *     });
+         *
+         */
+        obj.each = function (query, values, cb, thisArg) {
+            return obj.any.call(this, query, values)
+                .then(data => {
+                    data.forEach(cb, thisArg);
+                    return data;
+                });
+        };
+
+        /**
+         * @method Database#task
+         * @description
+         * Executes a callback function with automatically managed connection.
+         *
+         * When invoked on the root {@link Database} object, the method allocates the connection from the pool,
+         * executes the callback, and once finished - releases the connection back to the pool.
+         * However, when invoked inside another task or transaction, the method reuses the parent connection.
+         *
+         * This method should be used whenever executing more than one query at once, so the allocated connection
+         * is reused between all queries, and released only after the task has finished (see $[Chaining Queries]).
+         *
+         * The callback function is called with one parameter - database protocol (same as `this`), extended with methods
+         * {@link Task#batch batch}, {@link Task#page page}, {@link Task#sequence sequence}, plus property {@link Task#ctx ctx} -
+         * the task context object. See class {@link Task} for more details.
+         *
+         * @param {string|number|Object} [options]
+         * This parameter is optional, and presumed skipped when the first parameter is a function (`cb` parameter).
+         *
+         * When it is of type `string` or `number`, it is assumed to be option `tag` passed in directly. Otherwise,
+         * it is expected to be an object with options as listed below.
+         *
+         * @param {} [options.tag]
+         * Traceable context for the task (see $[tags]).
+         *
+         * @param {function|generator} cb
+         * Task callback function, to return the result that will determine either success or failure for the operation.
+         *
+         * The function can be either the first of the second parameter passed into the method.
+         *
+         * It also can be an $[ES6 generator] or an ES7 `async` function.
+         *
+         * @returns {external:Promise}
+         * A promise object with the result from the callback function.
+         *
+         * @see
+         * {@link Task},
+         * {@link Database#taskIf taskIf},
+         * {@link Database#tx tx},
+         * $[tags],
+         * $[Chaining Queries]
+         *
+         * @example
+         *
+         * db.task('my-task', t => {
+         *         // t.ctx = task context object
+         *         
+         *         return t.one('SELECT id FROM Users WHERE name = $1', 'John')
+         *             .then(user => {
+         *                 return t.any('SELECT * FROM Events WHERE userId = $1', user.id);
+         *             });
+         *     })
+         *     .then(data => {
+         *         // success
+         *         // data = as returned from the task's callback
+         *     })
+         *     .catch(error => {
+         *         // error
+         *     });
+         *
+         * @example
+         *
+         * // using an ES6 generator for the callback:
+         * db.task('my-task', function * (t) {
+         *         // t.ctx = task context object
+         *
+         *         const user = yield t.one('SELECT id FROM Users WHERE name = $1', 'John');
+         *         return yield t.any('SELECT * FROM Events WHERE userId = $1', user.id);
+         *     })
+         *     .then(data => {
+         *         // success
+         *         // data = as returned from the task's callback
+         *     })
+         *     .catch(error => {
+         *         // error
+         *     });
+         *
+         */
+        obj.task = function () {
+            return taskProcessor.call(this, npm.pubUtils.taskArgs(arguments), false);
+        };
+
+        /**
+         * @method Database#taskIf
+         * @description
+         * Executes a conditional task that results in an actual new {@link Database#task task}, if either condition is met or
+         * when it is necessary (on the top level), or else it reuses the current connection context.
+         *
+         * The default condition is `not in task or transaction`, to start a task only if currently not inside another task or transaction,
+         * which is the same as calling the following:
+         *
+         * ```js
+         * db.taskIf({cnd: t => !t.ctx}, cb => {})
+         * ```
+         *
+         * It can be useful, if you want to simplify/reduce the task + log events footprint, by creating new tasks only when necessary.
+         *
+         * @param {string|number|Object} [options]
+         * This parameter is optional, and presumed skipped when the first parameter is a function (`cb` parameter).
+         *
+         * When it is of type `string` or `number`, it is assumed to be option `tag` passed in directly. Otherwise,
+         * it is expected to be an object with options as listed below.
+         *
+         * @param {} [options.tag]
+         * Traceable context for the task/transaction (see $[tags]).
+         *
+         * @param {boolean|function} [options.cnd]
+         * Condition for creating a ({@link Database#task task}), if it is met.
+         * It can be either a simple boolean, or a callback function that takes the task context as `this` and as the first parameter.
+         *
+         * Default condition (when it is not specified):
+         *
+         * ```js
+         * {cnd: t => !t.ctx}
+         * ```
+         *
+         * @param {function|generator} cb
+         * Task callback function, to return the result that will determine either success or failure for the operation.
+         *
+         * The function can be either the first or the second parameter passed into the method.
+         *
+         * It also can be an $[ES6 generator] or an ES7 `async` function.
+         *
+         * @returns {external:Promise}
+         * A promise object with the result from the callback function.
+         *
+         * @see
+         * {@link Task},
+         * {@link Database#task Database.task},
+         * {@link Database#tx Database.tx},
+         * {@link Database#txIf Database.txIf},
+         * {@link TaskContext}
+         *
+         */
+        obj.taskIf = function () {
+            const args = npm.pubUtils.taskArgs(arguments);
+            try {
+                let cnd = args.options.cnd;
+                if ('cnd' in args.options) {
+                    cnd = typeof cnd === 'function' ? cnd.call(obj, obj) : !!cnd;
+                } else {
+                    cnd = !obj.ctx; // create task, if it is the top level
+                }
+                // reusable only if condition fails, and not top-level:
+                args.options.reusable = !cnd && !!obj.ctx;
+            } catch (e) {
+                return $p.reject(e);
+            }
+            return taskProcessor.call(this, args, false);
+        };
+
+        /**
+         * @method Database#tx
+         * @description
+         * Executes a callback function as a transaction, with automatically managed connection.
+         *
+         * When invoked on the root {@link Database} object, the method allocates the connection from the pool,
+         * executes the callback, and once finished - releases the connection back to the pool.
+         * However, when invoked inside another task or transaction, the method reuses the parent connection.
+         *
+         * A transaction wraps a regular {@link Database#task task} into additional queries:
+         * - it executes `BEGIN` just before invoking the callback function
+         * - it executes `COMMIT`, if the callback didn't throw any error or return a rejected promise
+         * - it executes `ROLLBACK`, if the callback did throw an error or return a rejected promise
+         * - it executes corresponding `SAVEPOINT` commands when the method is called recursively.
+         *
+         * The callback function is called with one parameter - database protocol (same as `this`), extended with methods
+         * {@link Task#batch batch}, {@link Task#page page}, {@link Task#sequence sequence}, plus property {@link Task#ctx ctx} -
+         * the transaction context object. See class {@link Task} for more details.
+         *
+         * Note that transactions should be chosen over tasks only where necessary, because unlike regular tasks,
+         * transactions are blocking operations, and must be used with caution.
+         *
+         * @param {string|number|Object} [options]
+         * This parameter is optional, and presumed skipped when the first parameter is a function (`cb` parameter).
+         *
+         * When it is of type `string` or `number`, it is assumed to be option `tag` passed in directly. Otherwise,
+         * it is expected to be an object with options as listed below.
+         *
+         * @param {} [options.tag]
+         * Traceable context for the transaction (see $[tags]).
+         *
+         * @param {txMode.TransactionMode} [options.mode]
+         * Transaction Configuration Mode - extends the transaction-opening command with additional configuration.
+         *
+         * @param {function|generator} cb
+         * Transaction callback function, to return the result that will determine either success or failure for the operation.
+         *
+         * The function can be either the first of the second parameter passed into the method.
+         *
+         * It also can be an $[ES6 generator] or an ES7 `async` function.
+         *
+         * @returns {external:Promise}
+         * A promise object with the result from the callback function.
+         *
+         * @see
+         * {@link Task},
+         * {@link Database#task Database.task},
+         * {@link Database#taskIf Database.taskIf},
+         * {@link TaskContext},
+         * $[tags],
+         * $[Chaining Queries]
+         *
+         * @example
+         *
+         * db.tx('my-transaction', t => {
+         *         // t.ctx = transaction context object
+         *         
+         *         return t.one('INSERT INTO Users(name, age) VALUES($1, $2) RETURNING id', ['Mike', 25])
+         *             .then(user => {
+         *                 return t.batch([
+         *                     t.none('INSERT INTO Events(userId, name) VALUES($1, $2)', [user.id, 'created']),
+         *                     t.none('INSERT INTO Events(userId, name) VALUES($1, $2)', [user.id, 'login'])
+         *                 ]);
+         *             });
+         *     })
+         *     .then(data => {
+         *         // success
+         *         // data = as returned from the transaction's callback
+         *     })
+         *     .catch(error => {
+         *         // error
+         *     });
+         *
+         * @example
+         *
+         * // using an ES6 generator for the callback:
+         * db.tx('my-transaction', function * (t) {
+         *         // t.ctx = transaction context object
+         *
+         *         const user = yield t.one('INSERT INTO Users(name, age) VALUES($1, $2) RETURNING id', ['Mike', 25]);
+         *         return yield t.none('INSERT INTO Events(userId, name) VALUES($1, $2)', [user.id, 'created']);
+         *     })
+         *     .then(data => {
+         *         // success
+         *         // data = as returned from the transaction's callback
+         *     })
+         *     .catch(error => {
+         *         // error
+         *     });
+         *
+         */
+        obj.tx = function () {
+            return taskProcessor.call(this, npm.pubUtils.taskArgs(arguments), true);
+        };
+
+        /**
+         * @method Database#txIf
+         * @description
+         * Executes a conditional transaction that results in an actual transaction ({@link Database#tx tx}), if the condition is met,
+         * or else it executes a regular {@link Database#task task}.
+         *
+         * The default condition is `not in transaction`, to start a transaction only if currently not in transaction,
+         * or else start a task, which is the same as calling the following:
+         *
+         * ```js
+         * db.txIf({cnd: t => !t.ctx || !t.ctx.inTransaction}, cb => {})
+         * ```
+         *
+         * It is useful when you want to avoid $[Nested Transactions] - savepoints.
+         *
+         * @param {string|number|Object} [options]
+         * This parameter is optional, and presumed skipped when the first parameter is a function (`cb` parameter).
+         *
+         * When it is of type `string` or `number`, it is assumed to be option `tag` passed in directly. Otherwise,
+         * it is expected to be an object with options as listed below.
+         *
+         * @param {} [options.tag]
+         * Traceable context for the task/transaction (see $[tags]).
+         *
+         * @param {txMode.TransactionMode} [options.mode]
+         * Transaction Configuration Mode - extends the transaction-opening command with additional configuration.
+         *
+         * @param {boolean|function} [options.cnd]
+         * Condition for opening a transaction ({@link Database#tx tx}), if it is met, or a {@link Database#task task} when the condition is not met.
+         * It can be either a simple boolean, or a callback function that takes the task/tx context as `this` and as the first parameter.
+         *
+         * Default condition (when it is not specified):
+         *
+         * ```js
+         * {cnd: t => !t.ctx || !t.ctx.inTransaction}
+         * ```
+         *
+         * @param {boolean|function} [options.reusable=false]
+         * When `cnd` is/returns false, reuse context of the current task/transaction, if one exists.
+         * It can be either a simple boolean, or a callback function that takes the task/tx context as `this`
+         * and as the first parameter.
+         *
+         * By default, when `cnd` is/returns false, the method creates a new task. This option tells
+         * the method to reuse the current task/transaction context, and not create a new task.
+         *
+         * This option is ignored when executing against the top level of the protocol, because on
+         * that level, if no transaction is suddenly needed, a new task becomes necessary.
+         *
+         * @param {function|generator} cb
+         * Transaction/task callback function, to return the result that will determine either
+         * success or failure for the operation.
+         *
+         * The function can be either the first or the second parameter passed into the method.
+         *
+         * It also can be an $[ES6 generator] or an ES7 `async` function.
+         *
+         * @returns {external:Promise}
+         * A promise object with the result from the callback function.
+         *
+         * @see
+         * {@link Task},
+         * {@link Database#task Database.task},
+         * {@link Database#taskIf Database.taskIf},
+         * {@link Database#tx Database.tx},
+         * {@link TaskContext}
+         *
+         */
+        obj.txIf = function () {
+            const args = npm.pubUtils.taskArgs(arguments);
+            try {
+                let cnd;
+                if ('cnd' in args.options) {
+                    cnd = args.options.cnd;
+                    cnd = typeof cnd === 'function' ? cnd.call(obj, obj) : !!cnd;
+                } else {
+                    cnd = !obj.ctx || !obj.ctx.inTransaction;
+                }
+                args.options.cnd = cnd;
+                const reusable = args.options.reusable;
+                args.options.reusable = !cnd && obj.ctx && typeof reusable === 'function' ? reusable.call(obj, obj) : !!reusable;
+            } catch (e) {
+                return $p.reject(e);
+            }
+            return taskProcessor.call(this, args, args.options.cnd);
+        };
+
+        // Task method;
+        // Resolves with result from the callback function;
+        function taskProcessor(params, isTX) {
+
+            if (typeof params.cb !== 'function') {
+                return $p.reject(new TypeError('Callback function is required.'));
+            }
+
+            if (params.options.reusable) {
+                return config.$npm.task.callback(obj.ctx, obj, params.cb, config);
+            }
+
+            const taskCtx = ctx.clone(); // task context object;
+            if (isTX) {
+                taskCtx.txLevel = taskCtx.txLevel >= 0 ? (taskCtx.txLevel + 1) : 0;
+            }
+            taskCtx.inTransaction = taskCtx.txLevel >= 0;
+            taskCtx.level = taskCtx.level >= 0 ? (taskCtx.level + 1) : 0;
+            taskCtx.cb = params.cb; // callback function;
+            taskCtx.mode = params.options.mode; // transaction mode;
+            if (this !== obj) {
+                taskCtx.context = this; // calling context object;
+            }
+
+            const tsk = new config.$npm.task.Task(taskCtx, params.options.tag, isTX, config);
+            taskCtx.taskCtx = tsk.ctx;
+            extend(taskCtx, tsk);
+
+            if (taskCtx.db) {
+                // reuse existing connection;
+                npm.utils.addReadProp(tsk.ctx, 'useCount', taskCtx.db.useCount);
+                return config.$npm.task.execute(taskCtx, tsk, isTX, config);
+            }
+
+            // connection required;
+            return config.$npm.connect.pool(taskCtx, dbThis)
+                .then(db => {
+                    taskCtx.connect(db);
+                    npm.utils.addReadProp(tsk.ctx, 'useCount', db.useCount);
+                    return config.$npm.task.execute(taskCtx, tsk, isTX, config);
+                })
+                .then(data => {
+                    taskCtx.disconnect();
+                    return data;
+                })
+                .catch(error => {
+                    taskCtx.disconnect();
+                    return $p.reject(error);
+                });
+        }
+
+        // lock all default properties to read-only,
+        // to prevent override by the client.
+        npm.utils.lock(obj, false, ctx.options);
+
+        // extend the protocol;
+        npm.events.extend(ctx.options, obj, ctx.dc);
+
+        // freeze the protocol permanently;
+        npm.utils.lock(obj, true, ctx.options);
+    }
+
+}
+
+// this event only happens when the connection is lost physically,
+// which cannot be tested automatically; removing from coverage:
+// istanbul ignore next
+function onError(err) {
+    const ctx = err.client.$ctx;
+    npm.events.error(ctx.options, err, {
+        cn: npm.utils.getSafeConnection(ctx.cn),
+        dc: ctx.dc
+    });
+}
+
+module.exports = config => {
+    const npmLocal = config.$npm;
+    npmLocal.connect = npmLocal.connect || npm.connect(config);
+    npmLocal.query = npmLocal.query || npm.query(config);
+    npmLocal.task = npmLocal.task || npm.task(config);
+    return Database;
+};
+
+/**
+ * @callback Database.streamInitCB
+ * @description
+ * Stream initialization callback, used by {@link Database#stream Database.stream}.
+ *
+ * @param {external:Stream} stream
+ * Stream object to initialize streaming.
+ *
+ * @example
+ * const QueryStream = require('pg-query-stream');
+ * const JSONStream = require('JSONStream');
+ *
+ * // you can also use pgp.as.format(query, values, options)
+ * // to format queries properly, via pg-promise;
+ * const qs = new QueryStream('SELECT * FROM users');
+ *
+ * db.stream(qs, stream => {
+ *         // initiate streaming into the console:
+ *         stream.pipe(JSONStream.stringify()).pipe(process.stdout);
+ *     })
+ *     .then(data => {
+ *         console.log('Total rows processed:', data.processed,
+ *           'Duration in milliseconds:', data.duration);
+ *     })
+ *     .catch(error => {
+ *         // error;
+ *     });
+ */
+
+/**
+ * @external Stream
+ * @see https://nodejs.org/api/stream.html
+ */
+
+/**
+ * @external pg-pool
+ * @alias pg-pool
+ * @see https://github.com/brianc/node-pg-pool
+ */
+
+/**
+ * @external Result
+ * @see https://node-postgres.com/api/result
+ */
+
+
+/***/ }),
+/* 102 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+/**
+ * @class ConnectionContext
+ * @private
+ * @summary Internal connection context.
+ *
+ * @param {object} cc
+ * Connection Context.
+ *
+ * @param {object} cc.cn
+ * Connection details
+ *
+ * @param {*} cc.dc
+ * Database Context
+ *
+ * @param {object} cc.options
+ * Library's Initialization Options
+ *
+ * @param {object} cc.db
+ * Database Session we're attached to, if any.
+ *
+ * @param {number} cc.level
+ * Task Level
+ *
+ * @param {number} cc.txLevel
+ * Transaction Level
+ *
+ * @param {object} cc.parentCtx
+ * Connection Context of the parent operation, if any.
+ *
+ */
+class ConnectionContext {
+
+    constructor(cc) {
+        this.cn = cc.cn; // connection details;
+        this.dc = cc.dc; // database context;
+        this.options = cc.options; // library options;
+        this.db = cc.db; // database session;
+        this.level = cc.level; // task level;
+        this.txLevel = cc.txLevel; // transaction level;
+        this.parentCtx = null; // parent context
+        this.taskCtx = null; // task context
+        this.start = null; // Date/Time when connected
+    }
+
+    connect(db) {
+        this.db = db;
+        this.start = new Date();
+    }
+
+    disconnect() {
+        if (this.db) {
+            this.db.done();
+            this.db = null;
+        }
+    }
+
+    clone() {
+        const obj = new ConnectionContext(this);
+        obj.parentCtx = this.taskCtx;
+        return obj;
+    }
+}
+
+/**
+ * Connection Context
+ * @module context
+ * @author Vitaly Tomilov
+ * @private
+ */
+module.exports = ConnectionContext;
+
+
+/***/ }),
+/* 103 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    con: __webpack_require__(7).local,
+    utils: __webpack_require__(0),
+    events: __webpack_require__(12),
+    text: __webpack_require__(6),
+    formatting: __webpack_require__(3)
+};
+
+function poolConnect(ctx, db, config) {
+    return config.promise((resolve, reject) => {
+        const p = db.$pool;
+        if (p.ending) {
+            db.$destroy();
+            const err = new Error(npm.text.poolDestroyed);
+            npm.events.error(ctx.options, err, {
+                dc: ctx.dc
+            });
+            reject(err);
+            return;
+        }
+        p.connect((err, client, done) => {
+            if (err) {
+                npm.events.error(ctx.options, err, {
+                    cn: npm.utils.getSafeConnection(ctx.cn),
+                    dc: ctx.dc
+                });
+                reject(err);
+            } else {
+                if ('$useCount' in client) {
+                    client.$useCount++;
+                } else {
+                    Object.defineProperty(client, '$useCount', {
+                        value: 0,
+                        configurable: false,
+                        enumerable: false,
+                        writable: true
+                    });
+                    hidePassword(client); // See: https://github.com/brianc/node-postgres/issues/1568
+                    setSchema(client, ctx);
+                }
+                setCtx(client, ctx);
+                const end = lockClientEnd(client);
+                client.on('error', onError);
+                resolve({
+                    client,
+                    useCount: client.$useCount,
+                    done() {
+                        client.end = end;
+                        done();
+                        npm.events.disconnect(ctx, client);
+                        client.removeListener('error', onError);
+                    }
+                });
+                npm.events.connect(ctx, client, client.$useCount);
+            }
+        });
+    });
+}
+
+function directConnect(ctx, config) {
+    return config.promise((resolve, reject) => {
+        const client = new config.pgp.pg.Client(ctx.cn);
+        client.connect(err => {
+            if (err) {
+                npm.events.error(ctx.options, err, {
+                    cn: npm.utils.getSafeConnection(ctx.cn),
+                    dc: ctx.dc
+                });
+                reject(err);
+            } else {
+                hidePassword(client); // See: https://github.com/brianc/node-postgres/issues/1568
+                setSchema(client, ctx);
+                setCtx(client, ctx);
+                const end = lockClientEnd(client);
+                client.on('error', onError);
+                resolve({
+                    client,
+                    useCount: 0,
+                    done() {
+                        client.end = end;
+                        client.end();
+                        npm.events.disconnect(ctx, client);
+                        client.removeListener('error', onError);
+                    }
+                });
+                npm.events.connect(ctx, client, 0);
+            }
+        });
+    });
+}
+
+// this event only happens when the connection is lost physically,
+// which cannot be tested automatically; removing from coverage:
+// istanbul ignore next
+function onError(err) {
+    const ctx = this.$ctx;
+    const cn = npm.utils.getSafeConnection(ctx.cn);
+    npm.events.error(ctx.options, err, {cn, dc: ctx.dc});
+    ctx.disconnect();
+    if (ctx.cnOptions && typeof ctx.cnOptions.onLost === 'function' && !ctx.notified) {
+        try {
+            ctx.cnOptions.onLost.call(this, err, {
+                cn,
+                dc: ctx.dc,
+                start: ctx.start,
+                client: this
+            });
+        } catch (e) {
+            npm.con.error(e && e.stack || e);
+        }
+        ctx.notified = true;
+    }
+}
+
+function lockClientEnd(client) {
+    const end = client.end;
+    client.end = doNotCall => {
+        // This call can happen only in the following two cases:
+        // 1. the client made the call directly, against the library's documentation (invalid code)
+        // 2. connection with the server broke, and the pool is terminating all clients forcefully.
+        npm.con.error(npm.text.clientEnd + '\n%s\n', npm.utils.getLocalStack(3));
+        if (!doNotCall) {
+            end.call(client);
+        }
+    };
+    return end;
+}
+
+function setCtx(client, ctx) {
+    Object.defineProperty(client, '$ctx', {
+        value: ctx,
+        writable: true
+    });
+}
+
+// See: https://github.com/brianc/node-postgres/issues/1568
+function hidePassword(client) {
+    hideProperty(client, 'password');
+    hideProperty(client.connectionParameters, 'password');
+}
+
+function hideProperty(obj, prop) {
+    Object.defineProperty(obj, prop, {value: obj[prop], enumerable: false});
+}
+
+function setSchema(client, ctx) {
+    let s = ctx.options.schema;
+    if (typeof s === 'function') {
+        s = s.call(ctx.dc, ctx.dc);
+    }
+    if (s && typeof s === 'string' || (Array.isArray(s) && s.length)) {
+        client.query(npm.formatting.as.format('SET search_path TO $1:name', [s]), err => {
+            // istanbul ignore if;
+            if (err) {
+                // This is unlikely to ever happen, unless the connection is created faulty,
+                // and fails on the very first query, which is impossible to test automatically.
+                throw err;
+            }
+        });
+    }
+}
+
+module.exports = config => ({
+    pool: (ctx, db) => poolConnect(ctx, db, config),
+    direct: ctx => directConnect(ctx, config)
+});
+
+
+/***/ }),
+/* 104 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    events: __webpack_require__(12),
+    utils: __webpack_require__(0),
+    text: __webpack_require__(6)
+};
+
+////////////////////////////////////////////
+// Streams query data into any destination,
+// with the help of pg-query-stream library.
+function $stream(ctx, qs, initCB, config) {
+
+    const $p = config.promise;
+
+    // istanbul ignore next:
+    // we do not provide code coverage for the Native Bindings specifics
+    if (ctx.options.pgNative) {
+        return $p.reject(new Error(npm.text.nativeStreaming));
+    }
+    if (!qs || !qs.constructor || qs.constructor.name !== 'PgQueryStream') {
+        // stream object wasn't passed in correctly;
+        return $p.reject(new TypeError(npm.text.invalidStream));
+    }
+    if (qs._reading || qs._closed) {
+        // stream object is in the wrong state;
+        return $p.reject(new Error(npm.text.invalidStreamState));
+    }
+    if (typeof initCB !== 'function') {
+        // parameter `initCB` must be passed as the initialization callback;
+        return $p.reject(new TypeError(npm.text.invalidStreamCB));
+    }
+
+    let error = npm.events.query(ctx.options, getContext());
+
+    if (error) {
+        error = getError(error);
+        npm.events.error(ctx.options, error, getContext());
+        return $p.reject(error);
+    }
+
+    const stream = ctx.db.client.query(qs);
+
+    stream.on('data', onData);
+    stream.on('error', onError);
+    stream.on('end', onEnd);
+
+    try {
+        initCB.call(this, stream); // the stream must be initialized during the call;
+    } catch (e) {
+        release();
+        error = getError(e);
+        npm.events.error(ctx.options, error, getContext());
+        return $p.reject(error);
+    }
+
+    const start = Date.now();
+    let resolve, reject, nRows = 0, cache = [];
+
+    function onData(data) {
+        cache.push(data);
+        nRows++;
+        if (cache.length >= qs.batchSize) {
+            notify();
+        }
+    }
+
+    function onError(e) {
+        release();
+        stream.close();
+        e = getError(e);
+        npm.events.error(ctx.options, e, getContext());
+        reject(e);
+    }
+
+    function onEnd() {
+        release();
+        notify();
+        resolve({
+            processed: nRows, // total number of rows processed;
+            duration: Date.now() - start // duration, in milliseconds;
+        });
+    }
+
+    function release() {
+        stream.removeListener('data', onData);
+        stream.removeListener('error', onError);
+        stream.removeListener('end', onEnd);
+    }
+
+    function notify() {
+        if (cache.length) {
+            const context = getContext();
+            error = npm.events.receive(ctx.options, cache, undefined, context);
+            cache = [];
+            if (error) {
+                onError(error);
+            }
+        }
+    }
+
+    function getError(e) {
+        return e instanceof npm.utils.InternalError ? e.error : e;
+    }
+
+    function getContext() {
+        let client;
+        if (ctx.db) {
+            client = ctx.db.client;
+        } else {
+            error = new Error(npm.text.looseQuery);
+        }
+        return {
+            client,
+            dc: ctx.dc,
+            query: qs.cursor.text,
+            params: qs.cursor.values,
+            ctx: ctx.ctx
+        };
+    }
+
+    return $p((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+
+}
+
+module.exports = $stream;
+
+
+/***/ }),
+/* 105 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+const npm = {
+    spex: __webpack_require__(106),
+    utils: __webpack_require__(0),
+    mode: __webpack_require__(40),
+    events: __webpack_require__(12),
+    query: __webpack_require__(44),
+    async: __webpack_require__(115),
+    text: __webpack_require__(6)
+};
+
+/**
+ * @interface Task
+ * @description
+ * Extends {@link Database} for an automatic connection session, with methods for executing multiple database queries.
+ *
+ * The type isn't available directly, it can only be created via methods {@link Database#task Database.task}, {@link Database#taskIf Database.taskIf},
+ * {@link Database#tx Database.tx} and {@link Database#txIf Database.txIf}.
+ *
+ * When executing more than one request at a time, one should allocate and release the connection only once,
+ * while executing all the required queries within the same connection session. More importantly, a transaction
+ * can only work within a single connection.
+ *
+ * This is an interface for tasks/transactions to implement a connection session, during which you can
+ * execute multiple queries against the same connection that's released automatically when the task/transaction is finished.
+ *
+ * Each task/transaction manages the connection automatically. When executed on the root {@link Database} object, the connection
+ * is allocated from the pool, and once the method's callback has finished, the connection is released back to the pool.
+ * However, when invoked inside another task or transaction, the method reuses the parent connection.
+ *
+ * @see
+ * {@link Task#ctx ctx},
+ * {@link Task#batch batch},
+ * {@link Task#sequence sequence},
+ * {@link Task#page page}
+ *
+ * @example
+ * db.task(t => {
+ *       // t = task protocol context;
+ *       // t.ctx = Task Context;
+ *       return t.one('select * from users where id=$1', 123)
+ *           .then(user => {
+ *               return t.any('select * from events where login=$1', user.name);
+ *           });
+ *   })
+ * .then(events => {
+ *       // success;
+ *   })
+ * .catch(error => {
+ *       // error;
+ *   });
+ *
+ */
+function Task(ctx, tag, isTX, config) {
+
+    const $p = config.promise;
+
+    /**
+     * @member {TaskContext} Task#ctx
+     * @readonly
+     * @description
+     * Task/Transaction Context object - contains individual properties for each task/transaction.
+     *
+     * @see event {@link event:query query}
+     *
+     * @example
+     *
+     * db.task(t => {
+     *     return t.ctx; // task context object
+     * })
+     *     .then(ctx => {
+     *         console.log('Task Duration:', ctx.duration);
+     *     });
+     *
+     * @example
+     *
+     * db.tx(t => {
+     *     return t.ctx; // transaction context object
+     * })
+     *     .then(ctx => {
+     *         console.log('Transaction Duration:', ctx.duration);
+     *     });
+     */
+    this.ctx = ctx.ctx = {}; // task context object;
+
+    npm.utils.addReadProp(this.ctx, 'isTX', isTX);
+
+    if ('context' in ctx) {
+        npm.utils.addReadProp(this.ctx, 'context', ctx.context);
+    }
+
+    npm.utils.addReadProp(this.ctx, 'connected', !ctx.db);
+    npm.utils.addReadProp(this.ctx, 'tag', tag);
+    npm.utils.addReadProp(this.ctx, 'dc', ctx.dc);
+    npm.utils.addReadProp(this.ctx, 'level', ctx.level);
+    npm.utils.addReadProp(this.ctx, 'inTransaction', ctx.inTransaction);
+
+    if (isTX) {
+        npm.utils.addReadProp(this.ctx, 'txLevel', ctx.txLevel);
+    }
+
+    npm.utils.addReadProp(this.ctx, 'parent', ctx.parentCtx);
+
+    // generic query method;
+    this.query = function (query, values, qrm) {
+        if (!ctx.db) {
+            return $p.reject(new Error(npm.text.looseQuery));
+        }
+        return config.$npm.query.call(this, ctx, query, values, qrm);
+    };
+
+    /**
+     * @method Task#batch
+     * @description
+     * Settles a predefined array of mixed values by redirecting to method $[spex.batch].
+     *
+     * For complete method documentation see $[spex.batch].
+     *
+     * @param {array} values
+     * @param {Object} [options]
+     * Optional Parameters.
+     * @param {function} [options.cb]
+     *
+     * @returns {external:Promise}
+     */
+    this.batch = function (values, options) {
+        return config.$npm.spex.batch.call(this, values, options);
+    };
+
+    /**
+     * @method Task#page
+     * @description
+     * Resolves a dynamic sequence of arrays/pages with mixed values, by redirecting to method $[spex.page].
+     *
+     * For complete method documentation see $[spex.page].
+     *
+     * @param {function} source
+     * @param {Object} [options]
+     * Optional Parameters.
+     * @param {function} [options.dest]
+     * @param {number} [options.limit=0]
+     *
+     * @returns {external:Promise}
+     */
+    this.page = function (source, options) {
+        return config.$npm.spex.page.call(this, source, options);
+    };
+
+    /**
+     * @method Task#sequence
+     * @description
+     * Resolves a dynamic sequence of mixed values by redirecting to method $[spex.sequence].
+     *
+     * For complete method documentation see $[spex.sequence].
+     *
+     * @param {function} source
+     * @param {Object} [options]
+     * Optional Parameters.
+     * @param {function} [options.dest]
+     * @param {number} [options.limit=0]
+     * @param {boolean} [options.track=false]
+     *
+     * @returns {external:Promise}
+     */
+    this.sequence = function (source, options) {
+        return config.$npm.spex.sequence.call(this, source, options);
+    };
+
+}
+
+/**
+ * @private
+ * @method Task.callback
+ * Callback invocation helper.
+ *
+ * @param ctx
+ * @param obj
+ * @param cb
+ * @param config
+ * @returns {Promise.<TResult>}
+ */
+const callback = (ctx, obj, cb, config) => {
+
+    const $p = config.promise;
+
+    let result;
+    if (cb.constructor.name === 'GeneratorFunction') {
+        cb = config.$npm.async(cb);
+    }
+    try {
+        result = cb.call(obj, obj); // invoking the callback function;
+    } catch (err) {
+        npm.events.error(ctx.options, err, {
+            client: ctx.db && ctx.db.client, // the error can be due to loss of connectivity
+            dc: ctx.dc,
+            ctx: ctx.ctx
+        });
+        return $p.reject(err); // reject with the error;
+    }
+    if (result && typeof result.then === 'function') {
+        return result; // result is a valid promise object;
+    }
+    return $p.resolve(result);
+};
+
+/**
+ * @private
+ * @method Task.execute
+ * Executes a task.
+ *
+ * @param ctx
+ * @param obj
+ * @param isTX
+ * @param config
+ * @returns {Promise.<TResult>}
+ */
+const execute = (ctx, obj, isTX, config) => {
+
+    const $p = config.promise;
+
+    // updates the task context and notifies the client;
+    function update(start, success, result) {
+        const c = ctx.ctx;
+        if (start) {
+            npm.utils.addReadProp(c, 'start', new Date());
+        } else {
+            c.finish = new Date();
+            c.success = success;
+            c.result = result;
+            c.duration = c.finish - c.start;
+            npm.utils.lock(c, true);
+        }
+        (isTX ? npm.events.transact : npm.events.task)(ctx.options, {
+            client: ctx.db && ctx.db.client, // loss of connectivity is possible at this point
+            dc: ctx.dc,
+            ctx: c
+        });
+    }
+
+    let cbData, cbReason, success,
+        spName; // Save-Point Name;
+
+    const capSQL = ctx.options.capSQL; // capitalize sql;
+
+    update(true);
+
+    if (isTX) {
+        // executing a transaction;
+        spName = 'level_' + ctx.txLevel;
+        return begin()
+            .then(() => callback(ctx, obj, ctx.cb, config)
+                .then(data => {
+                    cbData = data; // save callback data;
+                    success = true;
+                    return commit();
+                }, err => {
+                    if (npm.utils.isConnectivityError(err)) {
+                        // Cannot execute ROLLBACK after a connectivity error:
+                        return $p.reject(err);
+                    }
+                    cbReason = err; // save callback failure reason;
+                    return rollback();
+                })
+                .then(() => {
+                    if (success) {
+                        update(false, true, cbData);
+                        return cbData;
+                    }
+                    update(false, false, cbReason);
+                    return $p.reject(cbReason);
+                },
+                err => {
+                    // either COMMIT or ROLLBACK has failed, which is impossible
+                    // to replicate in a test environment, so skipping from the test;
+                    // istanbul ignore next:
+                    update(false, false, err);
+                    // istanbul ignore next:
+                    return $p.reject(err);
+                }),
+            err => {
+                // BEGIN has failed, which is impossible to replicate in a test
+                // environment, so skipping the whole block from the test;
+                // istanbul ignore next:
+                update(false, false, err);
+                // istanbul ignore next:
+                return $p.reject(err);
+            });
+    }
+
+    function begin() {
+        if (!ctx.txLevel && ctx.mode instanceof npm.mode.TransactionMode) {
+            return exec(ctx.mode.begin(capSQL), 'savepoint');
+        }
+        return exec('begin', 'savepoint');
+    }
+
+    function commit() {
+        return exec('commit', 'release savepoint');
+    }
+
+    function rollback() {
+        return exec('rollback', 'rollback to savepoint');
+    }
+
+    function exec(top, nested) {
+        if (ctx.txLevel) {
+            return obj.none((capSQL ? nested.toUpperCase() : nested) + ' ' + spName);
+        }
+        return obj.none(capSQL ? top.toUpperCase() : top);
+    }
+
+    // executing a task;
+    return callback(ctx, obj, ctx.cb, config)
+        .then(data => {
+            update(false, true, data);
+            return data;
+        })
+        .catch(error => {
+            update(false, false, error);
+            return $p.reject(error);
+        });
+
+};
+
+module.exports = config => {
+    const npmLocal = config.$npm;
+
+    // istanbul ignore next:
+    // we keep 'npm.query' initialization here, even though it is always
+    // pre-initialized by the 'database' module, for integrity purpose.
+    npmLocal.query = npmLocal.query || npm.query(config);
+
+    npmLocal.async = npmLocal.async || npm.async(config);
+    npmLocal.spex = npmLocal.spex || npm.spex(config.promiseLib);
+
+    return {
+        Task, execute, callback
+    };
+};
+
+/**
+ * @typedef TaskContext
+ * @description
+ * Task/Transaction Context used via property {@link Task#ctx ctx} inside tasks (methods {@link Database#task Database.task} and {@link Database#taskIf Database.taskIf})
+ * and transactions (methods {@link Database#tx Database.tx} and {@link Database#txIf Database.txIf}).
+ *
+ * Properties `context`, `connected`, `parent`, `level`, `dc`, `isTX`, `tag`, `start` and `useCount` are set just before the operation has started,
+ * while properties `finish`, `duration`, `success` and `result` are set immediately after the operation has finished.
+ *
+ * @property {*} context
+ * If the operation was invoked with a calling context - `task.call(context,...)` or `tx.call(context,...)`,
+ * this property is set with the context that was passed in. Otherwise, the property doesn't exist.
+ *
+ * @property {*} dc
+ * _Database Context_ that was passed into the {@link Database} object during construction.
+ *
+ * @property {boolean} isTX
+ * Indicates whether this operation is a transaction (as opposed to a regular task).
+ *
+ * @property {number} duration
+ * Number of milliseconds consumed by the operation.
+ *
+ * Set after the operation has finished, it is simply a shortcut for `finish - start`.
+ *
+ * @property {number} level
+ * Task nesting level, starting from 0, counting both regular tasks and transactions.
+ *
+ * @property {number} txLevel
+ * Transaction nesting level, starting from 0. Transactions on level 0 use `BEGIN/COMMIT/ROLLBACK`,
+ * while transactions on nested levels use the corresponding `SAVEPOINT` commands.
+ *
+ * This property exists only within the context of a transaction (`isTX = true`).
+ *
+ * @property {boolean} inTransaction
+ * Available in both tasks and transactions, it simplifies checking when there is a transaction
+ * going on either on this level or above.
+ *
+ * For example, when you want to check for a containing transaction while inside a task, and
+ * only start a transaction when there is none yet.
+ *
+ * @property {TaskContext} parent
+ * Parent task/transaction context, or `null` when it is top-level.
+ *
+ * @property {boolean} connected
+ * Indicates when the task/transaction acquired the connection on its own (`connected = true`), and will release it once
+ * the operation has finished. When the value is `false`, the operation is reusing an existing connection.
+ *
+ * @property {*} tag
+ * Tag value as it was passed into the task. See methods {@link Database#task task} and {@link Database#tx tx}.
+ *
+ * @property {Date} start
+ * Date/Time of when this operation started the execution.
+ *
+ * @property {number} useCount
+ * Number of times the connection has been previously used, starting with 0 for a freshly
+ * allocated physical connection.
+ *
+ * @property {Date} finish
+ * Once the operation has finished, this property is set to the Data/Time of when it happened.
+ *
+ * @property {boolean} success
+ * Once the operation has finished, this property indicates whether it was successful.
+ *
+ * @property {*} result
+ * Once the operation has finished, this property contains the result, depending on property `success`:
+ * - data resolved by the operation, if `success = true`
+ * - error / rejection reason, if `success = false`
+ *
+ */
+
+
+/***/ }),
+/* 106 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var npm = {
+    utils: __webpack_require__(107),
+    batch: __webpack_require__(108),
+    page: __webpack_require__(109),
+    sequence: __webpack_require__(110),
+    stream: __webpack_require__(111),
+    errors: __webpack_require__(113)
+};
+
+/**
+ * @module spex
+ * @summary Specialized Promise Extensions
+ * @author Vitaly Tomilov
+ *
+ * @description
+ * Attaches to an external promise library and provides additional methods built solely
+ * on the basic promise operations:
+ *  - construct a new promise with a callback function
+ *  - resolve a promise with some result data
+ *  - reject a promise with a reason
+ *
+ * ### usage
+ * For any third-party promise library:
+ * ```js
+ * var promise = require('bluebird');
+ * var spex = require('spex')(promise);
+ * ```
+ * For ES6 promises:
+ * ```js
+ * var spex = require('spex')(Promise);
+ * ```
+ *
+ * @param {Object|Function} promiseLib
+ * Instance of a promise library to be used by this module.
+ *
+ * Some implementations use `Promise` constructor to create a new promise, while
+ * others use the module's function for it. Both types are supported the same.
+ *
+ * Alternatively, an object of type {@link PromiseAdapter} can be passed in, which provides
+ * compatibility with any promise library outside of the standard.
+ *
+ * Passing in a promise library that cannot be recognized will throw
+ * `Invalid promise library specified.`
+ *
+ * @returns {Object}
+ * Namespace with all supported methods.
+ *
+ * @see {@link PromiseAdapter}, {@link batch}, {@link page}, {@link sequence}, {@link stream}
+ */
+function main(promiseLib) {
+
+    var spex = {}, // library instance;
+        promise = parsePromiseLib(promiseLib); // promise library parsing;
+
+    var config = {
+        spex: spex,
+        promise: promise,
+        utils: npm.utils(promise)
+    };
+
+    spex.errors = npm.errors;
+    spex.batch = npm.batch(config);
+    spex.page = npm.page(config);
+    spex.sequence = npm.sequence(config);
+    spex.stream = npm.stream(config);
+
+    config.utils.extend(spex, '$p', promise);
+
+    Object.freeze(spex);
+
+    return spex;
+}
+
+//////////////////////////////////////////
+// Parses and validates a promise library;
+function parsePromiseLib(lib) {
+    if (lib) {
+        var promise;
+        if (lib instanceof main.PromiseAdapter) {
+            promise = function (func) {
+                return lib.create(func);
+            };
+            promise.resolve = lib.resolve;
+            promise.reject = lib.reject;
+            return promise;
+        }
+        var t = typeof lib;
+        if (t === 'function' || t === 'object') {
+            var Root = typeof lib.Promise === 'function' ? lib.Promise : lib;
+            promise = function (func) {
+                return new Root(func);
+            };
+            promise.resolve = Root.resolve;
+            promise.reject = Root.reject;
+            if (typeof promise.resolve === 'function' && typeof promise.reject === 'function') {
+                return promise;
+            }
+        }
+    }
+    throw new TypeError('Invalid promise library specified.');
+}
+
+main.PromiseAdapter = __webpack_require__(114);
+Object.freeze(main);
+
+module.exports = main;
+
+/**
+ * @external Error
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error
+ */
+
+/**
+ * @external TypeError
+ * @see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypeError
+ */
+
+/**
+ * @external Promise
+ * @see https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/Promise
+ */
+
+
+/***/ }),
+/* 107 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var npm = {
+    stat: __webpack_require__(20)
+};
+
+module.exports = function ($p) {
+
+    var exp = {
+        formatError: npm.stat.formatError,
+        isPromise: npm.stat.isPromise,
+        isReadableStream: npm.stat.isReadableStream,
+        messageGap: npm.stat.messageGap,
+        extend: npm.stat.extend,
+        resolve: resolve,
+        wrap: wrap
+    };
+
+    return exp;
+
+    //////////////////////////////////////////
+    // Checks if the function is a generator,
+    // and if so - wraps it up into a promise;
+    function wrap(func) {
+        if (typeof func === 'function') {
+            if (func.constructor.name === 'GeneratorFunction') {
+                return asyncAdapter(func);
+            }
+            return func;
+        }
+        return null;
+    }
+
+    /////////////////////////////////////////////////////
+    // Resolves a mixed value into the actual value,
+    // consistent with the way mixed values are defined:
+    // https://github.com/vitaly-t/spex/wiki/Mixed-Values
+    function resolve(value, params, onSuccess, onError) {
+
+        var self = this,
+            delayed = false;
+
+        function loop() {
+            while (typeof value === 'function') {
+                if (value.constructor.name === 'GeneratorFunction') {
+                    value = asyncAdapter(value);
+                }
+                try {
+                    value = params ? value.apply(self, params) : value.call(self);
+                } catch (e) {
+                    onError(e, false); // false means 'threw an error'
+                    return;
+                }
+            }
+            if (exp.isPromise(value)) {
+                value
+                    .then(function (data) {
+                        delayed = true;
+                        value = data;
+                        loop();
+                        return null; // this dummy return is just to prevent Bluebird warnings;
+                    })
+                    .catch(function (error) {
+                        onError(error, true); // true means 'rejected'
+                    });
+            } else {
+                onSuccess(value, delayed);
+            }
+        }
+
+        loop();
+    }
+
+    // Generator-to-Promise adapter;
+    // Based on: https://www.promisejs.org/generators/#both
+    function asyncAdapter(generator) {
+        return function () {
+            var g = generator.apply(this, arguments);
+
+            function handle(result) {
+                if (result.done) {
+                    return $p.resolve(result.value);
+                }
+                return $p.resolve(result.value)
+                    .then(function (res) {
+                        return handle(g.next(res));
+                    }, function (err) {
+                        return handle(g.throw(err));
+                    });
+            }
+
+            return handle(g.next());
+        };
+    }
+
+};
+
+
+/***/ }),
+/* 108 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var BatchError = __webpack_require__(45);
+
+/**
+ * @method batch
+ * @description
+ * Settles (resolves or rejects) every [mixed value]{@tutorial mixed} in the input array.
+ *
+ * The method resolves with an array of results, the same as the standard $[promise.all],
+ * while providing comprehensive error details in case of a reject, in the form of
+ * type {@link errors.BatchError BatchError}.
+ *
+ * @param {Array} values
+ * Array of [mixed values]{@tutorial mixed} (it can be empty), to be resolved asynchronously, in no particular order.
+ *
+ * Passing in anything other than an array will reject with {@link external:TypeError TypeError} =
+ * `Method 'batch' requires an array of values.`
+ *
+ * @param {Object} [options]
+ * Optional Parameters.
+ *
+ * @param {Function|generator} [options.cb]
+ * Optional callback (or generator) to receive the result for each settled value.
+ *
+ * Callback Parameters:
+ *  - `index` = index of the value in the source array
+ *  - `success` - indicates whether the value was resolved (`true`), or rejected (`false`)
+ *  - `result` = resolved data, if `success`=`true`, or else the rejection reason
+ *  - `delay` = number of milliseconds since the last call (`undefined` when `index=0`)
+ *
+ * The function inherits `this` context from the calling method.
+ *
+ * It can optionally return a promise to indicate that notifications are handled asynchronously.
+ * And if the returned promise resolves, it signals a successful handling, while any resolved
+ * data is ignored.
+ *
+ * If the function returns a rejected promise or throws an error, the entire method rejects
+ * with {@link errors.BatchError BatchError} where the corresponding value in property `data`
+ * is set to `{success, result, origin}`:
+ *  - `success` = `false`
+ *  - `result` = the rejection reason or the error thrown by the notification callback
+ *  - `origin` = the original data passed into the callback as object `{success, result}`
+ *
+ * @returns {external:Promise}
+ *
+ * The method resolves with an array of individual resolved results, the same as the standard $[promise.all].
+ * In addition, the array is extended with a hidden read-only property `duration` - number of milliseconds
+ * spent resolving all the data.
+ *
+ * The method rejects with {@link errors.BatchError BatchError} when any of the following occurs:
+ *  - one or more values rejected or threw an error while being resolved as a [mixed value]{@tutorial mixed}
+ *  - notification callback `cb` returned a rejected promise or threw an error
+ *
+ */
+function batch(values, options, config) {
+
+    var $p = config.promise, utils = config.utils;
+
+    if (!Array.isArray(values)) {
+        return $p.reject(new TypeError('Method \'batch\' requires an array of values.'));
+    }
+
+    if (!values.length) {
+        var empty = [];
+        utils.extend(empty, 'duration', 0);
+        return $p.resolve(empty);
+    }
+
+    options = options || {};
+
+    var cb = utils.wrap(options.cb),
+        self = this, start = Date.now();
+
+    return $p(function (resolve, reject) {
+        var cbTime, errors = [], remaining = values.length,
+            result = new Array(remaining);
+        values.forEach(function (item, i) {
+            utils.resolve.call(self, item, null, function (data) {
+                result[i] = data;
+                step(i, true, data);
+            }, function (reason) {
+                result[i] = {success: false, result: reason};
+                errors.push(i);
+                step(i, false, reason);
+            });
+        });
+
+        function step(idx, pass, data) {
+            if (cb) {
+                var cbResult, cbNow = Date.now(),
+                    cbDelay = idx ? (cbNow - cbTime) : undefined;
+                cbTime = cbNow;
+                try {
+                    cbResult = cb.call(self, idx, pass, data, cbDelay);
+                } catch (e) {
+                    setError(e);
+                }
+                if (utils.isPromise(cbResult)) {
+                    cbResult
+                        .then(check)
+                        .catch(function (error) {
+                            setError(error);
+                            check();
+                        });
+                } else {
+                    check();
+                }
+            } else {
+                check();
+            }
+
+            function setError(e) {
+                var r = pass ? {success: false} : result[idx];
+                if (pass) {
+                    result[idx] = r;
+                    errors.push(idx);
+                }
+                r.result = e;
+                r.origin = {success: pass, result: data};
+            }
+
+            function check() {
+                if (!--remaining) {
+                    if (errors.length) {
+                        errors.sort();
+                        if (errors.length < result.length) {
+                            for (var i = 0, k = 0; i < result.length; i++) {
+                                if (i === errors[k]) {
+                                    k++;
+                                } else {
+                                    result[i] = {success: true, result: result[i]};
+                                }
+                            }
+                        }
+                        reject(new BatchError(result, errors, Date.now() - start));
+                    } else {
+                        utils.extend(result, 'duration', Date.now() - start);
+                        resolve(result);
+                    }
+                }
+                return null; // this dummy return is just to prevent Bluebird warnings;
+            }
+        }
+    });
+}
+
+module.exports = function (config) {
+    return function (values, options) {
+        return batch.call(this, values, options, config);
+    };
+};
+
+
+/***/ }),
+/* 109 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var PageError = __webpack_require__(46);
+
+/**
+ * @method page
+ * @description
+ * Resolves a dynamic sequence of pages/arrays with [mixed values]{@tutorial mixed}.
+ *
+ * The method acquires pages (arrays of [mixed values]{@tutorial mixed}) from the `source` function, one by one,
+ * and resolves each page as a {@link batch}, till no more pages left or an error/reject occurs.
+ *
+ * @param {Function|generator} source
+ * Expected to return a [mixed value]{@tutorial mixed} that resolves with the next page of data (array of [mixed values]{@tutorial mixed}).
+ * Returning or resolving with `undefined` ends the sequence, and the method resolves.
+ *
+ * The function inherits `this` context from the calling method.
+ *
+ * Parameters:
+ *  - `index` = index of the page being requested
+ *  - `data` = previously returned page, resolved as a {@link batch} (`undefined` when `index=0`)
+ *  - `delay` = number of milliseconds since the last call (`undefined` when `index=0`)
+ *
+ * If the function throws an error or returns a rejected promise, the method rejects with
+ * {@link errors.PageError PageError}, which will have property `source` set.
+ *
+ * And if the function returns or resolves with anything other than an array or `undefined`,
+ * the method rejects with the same {@link errors.PageError PageError}, but with `error` set to
+ * `Unexpected data returned from the source.`
+ *
+ * Passing in anything other than a function will reject with {@link external:TypeError TypeError} = `Parameter 'source' must be a function.`
+ *
+ * @param {Object} [options]
+ * Optional Parameters.
+ *
+ * @param {Function|generator} [options.dest]
+ * Optional destination function (or generator), to receive a resolved {@link batch} of data
+ * for each page, process it and respond as required.
+ *
+ * Parameters:
+ *  - `index` = page index in the sequence
+ *  - `data` = page data resolved as a {@link batch}
+ *  - `delay` = number of milliseconds since the last call (`undefined` when `index=0`)
+ *
+ * The function inherits `this` context from the calling method.
+ *
+ * It can optionally return a promise object, if notifications are handled asynchronously.
+ * And if a promise is returned, the method will not request another page from the `source`
+ * function until the promise has been resolved.
+ *
+ * If the function throws an error or returns a rejected promise, the sequence terminates,
+ * and the method rejects with {@link errors.PageError PageError}, which will have property `dest` set.
+ *
+ * @param {Number} [options.limit=0]
+ * Limits the maximum number of pages to be requested from the `source`. If the value is greater
+ * than 0, the method will successfully resolve once the specified limit has been reached.
+ *
+ * When `limit` isn't specified (default), the sequence is unlimited, and it will continue
+ * till one of the following occurs:
+ *  - `source` returns or resolves with `undefined` or an invalid value (non-array)
+ *  - either `source` or `dest` functions throw an error or return a rejected promise
+ *
+ * @returns {external:Promise}
+ *
+ * When successful, the method resolves with object `{pages, total, duration}`:
+ *  - `pages` = number of pages resolved
+ *  - `total` = the sum of all page sizes (total number of values resolved)
+ *  - `duration` = number of milliseconds consumed by the method
+ *
+ * When the method fails, it rejects with {@link errors.PageError PageError}.
+ *
+ */
+function page(source, options, config) {
+
+    var $p = config.promise, spex = config.spex, utils = config.utils;
+
+    if (typeof source !== 'function') {
+        return $p.reject(new TypeError('Parameter \'source\' must be a function.'));
+    }
+
+    options = options || {};
+    source = utils.wrap(source);
+
+    var request, srcTime, destTime,
+        limit = (options.limit > 0) ? parseInt(options.limit) : 0,
+        dest = utils.wrap(options.dest),
+        self = this, start = Date.now(), total = 0;
+
+    return $p(function (resolve, reject) {
+
+        function loop(idx) {
+            var srcNow = Date.now(),
+                srcDelay = idx ? (srcNow - srcTime) : undefined;
+            srcTime = srcNow;
+            utils.resolve.call(self, source, [idx, request, srcDelay], function (value) {
+                if (value === undefined) {
+                    success();
+                } else {
+                    if (value instanceof Array) {
+                        spex.batch(value)
+                            .then(function (data) {
+                                request = data;
+                                total += data.length;
+                                if (dest) {
+                                    var destResult, destNow = Date.now(),
+                                        destDelay = idx ? (destNow - destTime) : undefined;
+                                    destTime = destNow;
+                                    try {
+                                        destResult = dest.call(self, idx, data, destDelay);
+                                    } catch (err) {
+                                        fail({
+                                            error: err,
+                                            dest: data
+                                        }, 4, dest.name);
+                                        return;
+                                    }
+                                    if (utils.isPromise(destResult)) {
+                                        destResult
+                                            .then(next)
+                                            .catch(function (error) {
+                                                fail({
+                                                    error: error,
+                                                    dest: data
+                                                }, 3, dest.name);
+                                            });
+                                    } else {
+                                        next();
+                                    }
+                                } else {
+                                    next();
+                                }
+                                return null; // this dummy return is just to prevent Bluebird warnings;
+                            })
+                            .catch(function (error) {
+                                fail({
+                                    error: error
+                                }, 0);
+                            });
+                    } else {
+                        fail({
+                            error: new Error('Unexpected data returned from the source.'),
+                            source: request
+                        }, 5, source.name);
+                    }
+                }
+            }, function (reason, isRej) {
+                fail({
+                    error: reason,
+                    source: request
+                }, isRej ? 1 : 2, source.name);
+            });
+
+            function next() {
+                if (limit === ++idx) {
+                    success();
+                } else {
+                    loop(idx);
+                }
+                return null; // this dummy return is just to prevent Bluebird warnings;
+            }
+
+            function success() {
+                resolve({
+                    pages: idx,
+                    total: total,
+                    duration: Date.now() - start
+                });
+            }
+
+            function fail(reason, code, cbName) {
+                reason.index = idx;
+                reject(new PageError(reason, code, cbName, Date.now() - start));
+            }
+        }
+
+        loop(0);
+    });
+}
+
+module.exports = function (config) {
+    return function (source, options) {
+        return page.call(this, source, options, config);
+    };
+};
+
+
+/***/ }),
+/* 110 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var SequenceError = __webpack_require__(47);
+
+/**
+ * @method sequence
+ * @description
+ * Resolves a dynamic sequence of [mixed values]{@tutorial mixed}.
+ *
+ * The method acquires [mixed values]{@tutorial mixed} from the `source` function, one at a time, and resolves them,
+ * till either no more values left in the sequence or an error/reject occurs.
+ *
+ * It supports both [linked and detached sequencing]{@tutorial sequencing}.
+ *
+ * @param {Function|generator} source
+ * Expected to return the next [mixed value]{@tutorial mixed} to be resolved. Returning or resolving
+ * with `undefined` ends the sequence, and the method resolves.
+ *
+ * Parameters:
+ *  - `index` = current request index in the sequence
+ *  - `data` = resolved data from the previous call (`undefined` when `index=0`)
+ *  - `delay` = number of milliseconds since the last call (`undefined` when `index=0`)
+ *
+ * The function inherits `this` context from the calling method.
+ *
+ * If the function throws an error or returns a rejected promise, the sequence terminates,
+ * and the method rejects with {@link errors.SequenceError SequenceError}, which will have property `source` set.
+ *
+ * Passing in anything other than a function will reject with {@link external:TypeError TypeError} = `Parameter 'source' must be a function.`
+ *
+ * @param {Object} [options]
+ * Optional Parameters.
+ *
+ * @param {Function|generator} [options.dest=null]
+ * Optional destination function (or generator), to receive resolved data for each index,
+ * process it and respond as required.
+ *
+ * Parameters:
+ *  - `index` = index of the resolved data in the sequence
+ *  - `data` = the data resolved
+ *  - `delay` = number of milliseconds since the last call (`undefined` when `index=0`)
+ *
+ * The function inherits `this` context from the calling method.
+ *
+ * It can optionally return a promise object, if data processing is done asynchronously.
+ * If a promise is returned, the method will not request another value from the `source` function,
+ * until the promise has been resolved (the resolved value is ignored).
+ *
+ * If the function throws an error or returns a rejected promise, the sequence terminates,
+ * and the method rejects with {@link errors.SequenceError SequenceError}, which will have property `dest` set.
+ *
+ * @param {Number} [options.limit=0]
+ * Limits the maximum size of the sequence. If the value is greater than 0, the method will
+ * successfully resolve once the specified limit has been reached.
+ *
+ * When `limit` isn't specified (default), the sequence is unlimited, and it will continue
+ * till one of the following occurs:
+ *  - `source` either returns or resolves with `undefined`
+ *  - either `source` or `dest` functions throw an error or return a rejected promise
+ *
+ * @param {Boolean} [options.track=false]
+ * Changes the type of data to be resolved by this method. By default, it is `false`
+ * (see the return result). When set to be `true`, the method tracks/collects all resolved data
+ * into an array internally, and resolves with that array once the method has finished successfully.
+ *
+ * It must be used with caution, as to the size of the sequence, because accumulating data for
+ * a very large sequence can result in consuming too much memory.
+ *
+ * @returns {external:Promise}
+ *
+ * When successful, the resolved data depends on parameter `track`. When `track` is `false`
+ * (default), the method resolves with object `{total, duration}`:
+ *  - `total` = number of values resolved by the sequence
+ *  - `duration` = number of milliseconds consumed by the method
+ *
+ * When `track` is `true`, the method resolves with an array of all the data that has been resolved,
+ * the same way that the standard $[promise.all] resolves. In addition, the array comes extended with
+ * a hidden read-only property `duration` - number of milliseconds consumed by the method.
+ *
+ * When the method fails, it rejects with {@link errors.SequenceError SequenceError}.
+ */
+function sequence(source, options, config) {
+
+    var $p = config.promise, utils = config.utils;
+
+    if (typeof source !== 'function') {
+        return $p.reject(new TypeError('Parameter \'source\' must be a function.'));
+    }
+
+    source = utils.wrap(source);
+
+    options = options || {};
+
+    var limit = (options.limit > 0) ? parseInt(options.limit) : 0,
+        dest = utils.wrap(options.dest),
+        self = this, data, srcTime, destTime, result = [], start = Date.now();
+
+    return $p(function (resolve, reject) {
+
+        function loop(idx) {
+            var srcNow = Date.now(),
+                srcDelay = idx ? (srcNow - srcTime) : undefined;
+            srcTime = srcNow;
+            utils.resolve.call(self, source, [idx, data, srcDelay], function (value, delayed) {
+                data = value;
+                if (data === undefined) {
+                    success();
+                } else {
+                    if (options.track) {
+                        result.push(data);
+                    }
+                    if (dest) {
+                        var destResult, destNow = Date.now(),
+                            destDelay = idx ? (destNow - destTime) : undefined;
+                        destTime = destNow;
+                        try {
+                            destResult = dest.call(self, idx, data, destDelay);
+                        } catch (e) {
+                            fail({
+                                error: e,
+                                dest: data
+                            }, 3, dest.name);
+                            return;
+                        }
+                        if (utils.isPromise(destResult)) {
+                            destResult
+                                .then(function () {
+                                    next(true);
+                                    return null; // this dummy return is just to prevent Bluebird warnings;
+                                })
+                                .catch(function (error) {
+                                    fail({
+                                        error: error,
+                                        dest: data
+                                    }, 2, dest.name);
+                                });
+                        } else {
+                            next(delayed);
+                        }
+                    } else {
+                        next(delayed);
+                    }
+                }
+            }, function (reason, isRej) {
+                fail({
+                    error: reason,
+                    source: data
+                }, isRej ? 0 : 1, source.name);
+            });
+
+            function next(delayed) {
+                if (limit === ++idx) {
+                    success();
+                } else {
+                    if (delayed) {
+                        loop(idx);
+                    } else {
+                        $p.resolve()
+                            .then(function () {
+                                loop(idx);
+                                return null; // this dummy return is just to prevent Bluebird warnings;
+                            });
+                    }
+                }
+            }
+
+            function success() {
+                var length = Date.now() - start;
+                if (options.track) {
+                    utils.extend(result, 'duration', length);
+                } else {
+                    result = {
+                        total: idx,
+                        duration: length
+                    };
+                }
+                resolve(result);
+            }
+
+            function fail(reason, code, cbName) {
+                reason.index = idx;
+                reject(new SequenceError(reason, code, cbName, Date.now() - start));
+            }
+        }
+
+        loop(0);
+    });
+}
+
+module.exports = function (config) {
+    return function (source, options) {
+        return sequence.call(this, source, options, config);
+    };
+};
+
+
+/***/ }),
+/* 111 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var npm = {
+    read: __webpack_require__(112)
+};
+
+/**
+ * @namespace stream
+ * @description
+ * Namespace with methods that implement stream operations, and {@link stream.read read} is the only method currently supported.
+ *
+ * **Synchronous Stream Processing**
+ *
+ * ```js
+ * var stream = require('spex')(Promise).stream;
+ * var fs = require('fs');
+ *
+ * var rs = fs.createReadStream('values.txt');
+ *
+ * function receiver(index, data, delay) {
+ *    console.log('RECEIVED:', index, data, delay);
+ * }
+ *
+ * stream.read(rs, receiver)
+ *     .then(function (data) {
+ *         console.log('DATA:', data);
+ *     })
+ *     .catch(function (error) {
+ *         console.log('ERROR:', error);
+ *     });
+ * ```
+ *
+ * **Asynchronous Stream Processing**
+ *
+ * ```js
+ * var stream = require('spex')(Promise).stream;
+ * var fs = require('fs');
+ *
+ * var rs = fs.createReadStream('values.txt');
+ *
+ * function receiver(index, data, delay) {
+ *    return new Promise(function (resolve) {
+ *        console.log('RECEIVED:', index, data, delay);
+ *        resolve();
+ *    });
+ * }
+ *
+ * stream.read(rs, receiver)
+ *     .then(function (data) {
+ *         console.log('DATA:', data);
+ *     })
+ *     .catch(function (error) {
+ *         console.log('ERROR:', error);
+ *    });
+ * ```
+ *
+ * @property {function} stream.read
+ * Consumes and processes data from a $[Readable] stream.
+ *
+ */
+module.exports = function (config) {
+    var res = {
+        read: npm.read(config)
+    };
+    Object.freeze(res);
+    return res;
+};
+
+
+/***/ }),
+/* 112 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+/**
+ * @method stream.read
+ * @description
+ * Consumes and processes data from a $[Readable] stream.
+ *
+ * It reads the entire stream, using either **paused mode** (default), or in chunks (see `options.readChunks`)
+ * with support for both synchronous and asynchronous data processing.
+ *
+ * **NOTE:** Once the method has finished, the onus is on the caller to release the stream
+ * according to its protocol.
+ *
+ * @param {Object} stream
+ * $[Readable] stream object.
+ *
+ * Passing in anything else will throw `Readable stream is required.`
+ *
+ * @param {Function|generator} receiver
+ * Data processing callback (or generator).
+ *
+ * Passing in anything else will throw `Invalid stream receiver.`
+ *
+ * Parameters:
+ *  - `index` = index of the call made to the function
+ *  - `data` = array of all data reads from the stream's buffer
+ *  - `delay` = number of milliseconds since the last call (`undefined` when `index=0`)
+ *
+ * The function is called with the same `this` context as the calling method.
+ *
+ * It can optionally return a promise object, if data processing is asynchronous.
+ * And if a promise is returned, the method will not read data from the stream again,
+ * until the promise has been resolved.
+ *
+ * If the function throws an error or returns a rejected promise, the method rejects
+ * with the same error / rejection reason.
+ *
+ * @param {Object} [options]
+ * Optional Parameters.
+ *
+ * @param {Boolean} [options.closable=false]
+ * Instructs the method to resolve on event `close` supported by the stream, as opposed to event
+ * `end` that's used by default.
+ *
+ * @param {Boolean} [options.readChunks=false]
+ * By default, the method handles event `readable` of the stream to consume data in a simplified form,
+ * item by item. If you enable this option, the method will instead handle event `data` of the stream,
+ * to consume chunks of data.
+ *
+ * @param {Number} [options.readSize]
+ * When the value is greater than 0, it sets the read size from the stream's buffer
+ * when the next data is available. By default, the method uses as few reads as possible
+ * to get all the data currently available in the buffer.
+ *
+ * NOTE: This option is ignored when option `readChunks` is enabled.
+ *
+ * @returns {external:Promise}
+ *
+ * When finished successfully, resolves with object `{calls, reads, length, duration}`:
+ *  - `calls` = number of calls made into the `receiver`
+ *  - `reads` = number of successful reads from the stream
+ *  - `length` = total length for all the data reads from the stream
+ *  - `duration` = number of milliseconds consumed by the method
+ *
+ * When it fails, the method rejects with the error/reject specified,
+ * which can happen as a result of:
+ *  - event `error` emitted by the stream
+ *  - receiver throws an error or returns a rejected promise
+ */
+function read(stream, receiver, options, config) {
+
+    var $p = config.promise, utils = config.utils;
+
+    if (!utils.isReadableStream(stream)) {
+        return $p.reject(new TypeError('Readable stream is required.'));
+    }
+
+    if (typeof receiver !== 'function') {
+        return $p.reject(new TypeError('Invalid stream receiver.'));
+    }
+
+    receiver = utils.wrap(receiver);
+
+    options = options || {};
+
+    var cbTime, ready, waiting, stop,
+        readSize = (options.readSize > 0) ? parseInt(options.readSize) : null,
+        self = this, reads = 0, length = 0, start = Date.now(), index = 0,
+        receiveEvent = options.readChunks ? 'data' : 'readable';
+
+    return $p(function (resolve, reject) {
+
+        function onReceive(data) {
+            ready = true;
+            process(data);
+        }
+
+        function onEnd() {
+            if (!options.closable) {
+                success();
+            }
+        }
+
+        function onClose() {
+            success();
+        }
+
+        function onError(error) {
+            fail(error);
+        }
+
+        stream.on(receiveEvent, onReceive);
+        stream.on('end', onEnd);
+        stream.on('close', onClose);
+        stream.on('error', onError);
+
+        function process(data) {
+            if (!ready || stop || waiting) {
+                return;
+            }
+            ready = false;
+            var cache;
+            if (options.readChunks) {
+                cache = data;
+                if(!Array.isArray(cache)){
+                    cache = [cache];
+                }
+                length += cache.length;
+                reads++;
+            } else {
+                cache = [];
+                waiting = true;
+                do {
+                    var page = stream.read(readSize);
+                    if (page) {
+                        cache.push(page);
+                        // istanbul ignore next: requires a unique stream that
+                        // creates objects without property `length` defined.
+                        length += page.length || 0;
+                        reads++;
+                    }
+                } while (page);
+
+                if (!cache.length) {
+                    waiting = false;
+                    return;
+                }
+            }
+
+            var result, cbNow = Date.now(),
+                cbDelay = index ? (cbNow - cbTime) : undefined;
+            cbTime = cbNow;
+            try {
+                result = receiver.call(self, index++, cache, cbDelay);
+            } catch (e) {
+                fail(e);
+                return;
+            }
+
+            if (utils.isPromise(result)) {
+                result
+                    .then(function () {
+                        waiting = false;
+                        process();
+                        return null; // this dummy return is just to prevent Bluebird warnings;
+                    })
+                    .catch(function (error) {
+                        fail(error);
+                    });
+            } else {
+                waiting = false;
+                process();
+            }
+        }
+
+        function success() {
+            cleanup();
+            resolve({
+                calls: index,
+                reads: reads,
+                length: length,
+                duration: Date.now() - start
+            });
+        }
+
+        function fail(error) {
+            stop = true;
+            cleanup();
+            reject(error);
+        }
+
+        function cleanup() {
+            stream.removeListener(receiveEvent, onReceive);
+            stream.removeListener('close', onClose);
+            stream.removeListener('error', onError);
+            stream.removeListener('end', onEnd);
+        }
+    });
+}
+
+module.exports = function (config) {
+    return function (stream, receiver, options) {
+        return read.call(this, stream, receiver, options, config);
+    };
+};
+
+
+/***/ }),
+/* 113 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var npm = {
+    BatchError: __webpack_require__(45),
+    PageError: __webpack_require__(46),
+    SequenceError: __webpack_require__(47)
+};
+
+/**
+ * @namespace errors
+ * @description
+ * Namespace for all custom error types supported by the library.
+ *
+ * In addition to the custom error type used by each method (regular error), they can also reject with
+ * {@link external:TypeError TypeError} when receiving invalid input parameters.
+ *
+ * @property {function} BatchError
+ * {@link errors.BatchError BatchError} interface.
+ *
+ * Represents regular errors that can be reported by method {@link batch}.
+ *
+ * @property {function} PageError
+ * {@link errors.PageError PageError} interface.
+ *
+ * Represents regular errors that can be reported by method {@link page}.
+ *
+ * @property {function} SequenceError
+ * {@link errors.SequenceError SequenceError} interface.
+ *
+ * Represents regular errors that can be reported by method {@link sequence}.
+ *
+ */
+module.exports = {
+    BatchError: npm.BatchError,
+    PageError: npm.PageError,
+    SequenceError: npm.SequenceError
+};
+
+Object.freeze(module.exports);
+
+
+/***/ }),
+/* 114 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+/**
+ * @class PromiseAdapter
+ * @description
+ * Adapter for the primary promise operations.
+ * 
+ * Provides compatibility with promise libraries that cannot be recognized automatically,
+ * via functions that implement the primary operations with promises:
+ *
+ *  - construct a new promise with a callback function
+ *  - resolve a promise with some result data
+ *  - reject a promise with a reason
+ *
+ * #### Example
+ *
+ * Below is an example of setting up a [client-side]{@tutorial client} adapter for AngularJS $q.
+ *
+ * ```js
+ * var spexLib = require('spex'); // or include client-side spex.js
+ *
+ * var adapter = new spexLib.PromiseAdapter(
+ *    function (cb) {
+ *        return $q(cb); // creating a new promise;
+ *    }, function (data) {
+ *        return $q.when(data); // resolving a promise;
+ *    }, function (reason) {
+ *        return $q.reject(reason); // rejecting a promise;
+ *    });
+ *
+ * var spex = spexLib(adapter);
+ * ```
+ * Please note that AngularJS 1.4.1 or later no longer requires a promise adapter.
+ *
+ * @param {Function} create
+ * A function that takes a callback parameter and returns a new promise object.
+ * The callback parameter is expected to be `function(resolve, reject)`.
+ *
+ * Passing in anything other than a function will throw `Adapter requires a function to create a promise.`
+ *
+ * @param {Function} resolve
+ * A function that takes an optional data parameter and resolves a promise with it.
+ *
+ * Passing in anything other than a function will throw `Adapter requires a function to resolve a promise.`
+ *
+ * @param {Function} reject
+ * A function that takes an optional error parameter and rejects a promise with it.
+ *
+ * Passing in anything other than a function will throw `Adapter requires a function to reject a promise.`
+ *
+ * @see {@tutorial client}
+ * 
+ * @returns {PromiseAdapter}
+ */
+function PromiseAdapter(create, resolve, reject) {
+
+    if (!(this instanceof PromiseAdapter)) {
+        return new PromiseAdapter(create, resolve, reject);
+    }
+
+    this.create = create;
+    this.resolve = resolve;
+    this.reject = reject;
+
+    if (typeof create !== 'function') {
+        throw new TypeError('Adapter requires a function to create a promise.');
+    }
+
+    if (typeof resolve !== 'function') {
+        throw new TypeError('Adapter requires a function to resolve a promise.');
+    }
+
+    if (typeof reject !== 'function') {
+        throw new TypeError('Adapter requires a function to reject a promise.');
+    }
+}
+
+module.exports = PromiseAdapter;
+
+
+/***/ }),
+/* 115 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+/*
+ * Copyright (c) 2015-present, Vitaly Tomilov
+ *
+ * See the LICENSE file at the top-level directory of this distribution
+ * for licensing information.
+ *
+ * Removal or modification of this copyright notice is prohibited.
+ */
+
+
+
+/**
+ * ES6 generators
+ * @module async
+ * @author Vitaly Tomilov
+ * @private
+ */
+module.exports = config => {
+
+    /////////////////////////////////
+    // Generator-to-Promise adapter;
+    //
+    // Based on: https://www.promisejs.org/generators/#both
+    return generator => {
+        const $p = config.promise;
+        return function () {
+            const g = generator.apply(this, arguments);
+
+            const handle = result => {
+                if (result.done) {
+                    return $p.resolve(result.value);
+                }
+                return $p.resolve(result.value)
+                    .then(data => handle(g.next(data)))
+                    .catch(err => handle(g.throw(err)));
+            };
+
+            return handle(g.next());
+        };
+    };
+
+};
+
+
+/***/ }),
 /* 116 */
 /***/ (function(module, exports, __webpack_require__) {
 
@@ -14888,13 +33947,13 @@ var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_RESULT__;/*!
 "use strict";
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_0_koa_router__ = __webpack_require__(224);
 /* harmony import */ var __WEBPACK_IMPORTED_MODULE_0_koa_router___default = __webpack_require__.n(__WEBPACK_IMPORTED_MODULE_0_koa_router__);
-/* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__controllers_userController__ = __webpack_require__(235);
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_1__controllers_UserController__ = __webpack_require__(236);
 
 
 
 const userRouter = new __WEBPACK_IMPORTED_MODULE_0_koa_router___default.a();
 
-userRouter.post('/api/user/:nickname/create', __WEBPACK_IMPORTED_MODULE_1__controllers_userController__["a" /* default */].create);
+userRouter.post('/api/user/:nickname/create', __WEBPACK_IMPORTED_MODULE_1__controllers_UserController__["a" /* default */].create);
 // userRouter.get('/api/user/:nickname/profile', userController.get);
 // userRouter.post('/api/user/:nickname/profile', userController.update);
 
@@ -19339,16 +38398,28 @@ var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_ARRAY__, __WEBPACK_AMD_
 
 
 /***/ }),
-/* 235 */
+/* 235 */,
+/* 236 */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
+/* harmony import */ var __WEBPACK_IMPORTED_MODULE_0__DataBase_DataBase__ = __webpack_require__(237);
+
+
 class UserController {
     async create(ctx, next) {
-        console.log(ctx.params.nickname);
-        ctx.body = {
-            lol: 1
-        };
+        const dataBase = new __WEBPACK_IMPORTED_MODULE_0__DataBase_DataBase__["a" /* default */]({},
+            {
+            user: 'anton',
+            database: 'anton',
+            password: '12345',
+            host: '127.0.0.1',
+            port: 5432
+        });
+        const result = await dataBase.controller.one(`INSERT INTO users (nickname, email, fullname, about) 
+                                 VALUES('kabachok1', 'kabachok1@mail.ru', 'kab', 'about') RETURNING *`);
+        console.log(result);
+        ctx.body = result;
         ctx.status = 200;
     }
 
@@ -19386,6 +38457,26 @@ class UserController {
 
 const userController = new UserController();
 /* harmony default export */ __webpack_exports__["a"] = (userController);
+
+/***/ }),
+/* 237 */
+/***/ (function(module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+const pgp = __webpack_require__(24);
+
+class DataBase {
+    constructor(options, connection) {
+        this._pgp = pgp(options);
+        this._controller = this._pgp(connection);
+    }
+
+    get controller() {
+        return this._controller;
+    }
+}
+/* harmony export (immutable) */ __webpack_exports__["a"] = DataBase;
+
 
 /***/ })
 /******/ ]);

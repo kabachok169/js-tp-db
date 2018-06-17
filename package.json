@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/kabachok169/js-tp-db#readme",
   "dependencies": {
+    "bluebird": "^3.5.1",
     "koa": "^2.5.1",
     "koa-bodyparser": "^4.2.1",
     "koa-router": "^7.4.0",

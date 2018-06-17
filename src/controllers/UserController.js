@@ -1,9 +1,19 @@
+import DataBase from '../DataBase/DataBase';
+
 class UserController {
     async create(ctx, next) {
-        console.log(ctx.params.nickname);
-        ctx.body = {
-            lol: 1
-        };
+        const dataBase = new DataBase({},
+            {
+            user: 'anton',
+            database: 'anton',
+            password: '12345',
+            host: '127.0.0.1',
+            port: 5432
+        });
+        const result = await dataBase.controller.one(`INSERT INTO users (nickname, email, fullname, about) 
+                                 VALUES('kabachok1', 'kabachok1@mail.ru', 'kab', 'about') RETURNING *`);
+        console.log(result);
+        ctx.body = result;
         ctx.status = 200;
     }
 
