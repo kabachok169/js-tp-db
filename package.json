@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "webpack": "./node_modules/.bin/webpack -w --config webpack.config.js",
+    "start": "node ./built/bundle.js"
   },
   "repository": {
     "type": "git",
@@ -13,10 +15,17 @@
   "author": "'",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/kabachok169/js-tp-db/issues"
+    "url": "https://github.com/kabachok169/js-tp-db/issuzes"
   },
   "homepage": "https://github.com/kabachok169/js-tp-db#readme",
   "dependencies": {
+    "koa": "^2.5.1",
+    "koa-bodyparser": "^4.2.1",
+    "koa-router": "^7.4.0",
+    "pg-native": "^3.0.0",
     "pg-promise": "^8.4.4"
+  },
+  "devDependencies": {
+    "webpack": "^3.12.0"
   }
 }
