@@ -4,7 +4,7 @@ MAINTAINER Anton Dmitriev
 
 # Update packages
 RUN apt-get -y update
-#RUN apt-get install libpq-dev apt-utils build-essential -y
+RUN apt-get install libpq-dev apt-utils build-essential -y
 
 
 # Install postgresql
