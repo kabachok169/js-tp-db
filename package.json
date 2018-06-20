@@ -5,14 +5,15 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "webpack": "./node_modules/.bin/webpack -w --config webpack.config.js",
+    "webpack-dev": "./node_modules/.bin/webpack -w --config webpack.config.dev.js",
+    "webpack": "./node_modules/.bin/webpack --config webpack.config.js",
     "start": "node ./built/bundle.js"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kabachok169/js-tp-db.git"
   },
-  "author": "'",
+  "author": "Kabachok169",
   "license": "ISC",
   "bugs": {
     "url": "https://github.com/kabachok169/js-tp-db/issuzes"

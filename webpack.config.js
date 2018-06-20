@@ -7,6 +7,5 @@ module.exports = {
         filename: 'built/bundle.js'
     },
 
-    target: 'node',
-    watch: true
+    target: 'node'
 };

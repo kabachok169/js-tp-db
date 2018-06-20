@@ -1,5 +1,7 @@
 CREATE EXTENSION IF NOT EXISTS CITEXT;
 
+
+
 CREATE TABLE users
 (
   id BIGSERIAL UNIQUE,
@@ -45,6 +47,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueSlugThread ON thread(slug);
 
 CREATE TABLE messages (
   id SERIAL NOT NULL PRIMARY KEY,
+
   author VARCHAR NOT NULL REFERENCES users(nickname),
   created TIMESTAMP WITH TIME ZONE DEFAULT current_timestamp,
   forum VARCHAR,
