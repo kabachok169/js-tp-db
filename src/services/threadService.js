@@ -8,7 +8,6 @@ class ThreadService extends DataBaseService {
         this.queries = {
             find_by_id: "SELECT * FROM threads WHERE id = $1;",
             find_by_slug: "SELECT * FROM threads WHERE lower(slug) = lower($1);",
-
         }
 
         this.isID = val => +val;        
@@ -29,7 +28,7 @@ class ThreadService extends DataBaseService {
             return [404, {message: 'No thread found'}];
         }
 
-        [thread.id, thread.votes] = [+thread.id, +thread.votes]
+        [thread.id, thread.votes] = [+thread.id, +thread.votes];
 
         return [200, thread];
     }
@@ -59,8 +58,27 @@ class ThreadService extends DataBaseService {
         return [200, thread];
     }
 
-    async createPosts(slugOrId, updates, date) {
+    async createPosts(slugOrId, posts, date) {
+        let query = this.queries.find_by_slug;
+        if (this.isID(slugOrId)) {
+            query = this.queries.find_by_id;
+        }
 
+        const thread = await this.dataBase.oneOrNone(query, slugOrId);
+
+        if (!thread) {
+            return [404, {message: 'No thread found'}];
+        }
+
+        posts.forEach((item) => {
+            if (item.parent === undefined) {
+                item.parent = 0;
+                item.path = [];
+            }
+            item.created = date;
+        })
+
+        
     }
 }
 
