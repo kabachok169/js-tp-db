@@ -16,7 +16,7 @@ export default class DataBaseService {
   }
 
   checkThread(slug) {
-    return `'SELECT * FROM thread WHERE LOWER(thread.slug) = LOWER('${slug}');`;
+    return `SELECT * FROM thread WHERE LOWER(thread.slug) = LOWER('${slug}');`;
   }
 
   get pgp() {
