@@ -104,8 +104,33 @@ class ForumService extends DataBaseService {
 
     }
 
-    async getThreads(slug) {
+    async getThreads(slug, since, limit, desc) {
+        const forum = await this.dataBase.oneOrNone(
+            `SELECT * FROM forum WHERE LOWER(slug) = LOWER('${slug}');`
+        );
 
+        if (!forum) {
+            return [404, {message: 'No forum found'}];
+        }
+
+        const threads = await this.dataBase.manyOrNone(
+            `SELECT * FROM thread WHERE LOWER(thread.forum) = LOWER('${slug}') 
+            ${desc === 'true' ?
+                since ? ` AND thread.created <= '${since}'` : '' 
+                :
+                since ? ` AND thread.created >= '${since}'` : ''
+            }
+             ORDER BY thread.created ${desc ==='true' ? 'DESC' : 'ASC'} 
+             ${limit ? ` LIMIT ${limit}` : ''}`
+        );
+        console.log(limit);
+
+        threads.forEach((item) => {
+            item.id = +item.id;
+            item.votes = +item.votes;
+        });
+
+        return [200, threads];
     }
 }
 

@@ -42,8 +42,13 @@ class ForumController {
 
     async getThreads(ctx) {
         const slug = ctx.params['slug'];
+        const since = ctx.query['since'];
+        const limit = ctx.query['limit'];
+        const desc = ctx.query['desc'];
 
-        const [status, result] = await forumService.getThreads(slug);
+        console.log(limit);
+
+        const [status, result] = await forumService.getThreads(slug, since, limit, desc);
 
         ctx.body = result;
         ctx.status = status;
