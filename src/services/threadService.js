@@ -24,10 +24,10 @@ class ThreadService extends DataBaseService {
         console.log(thread);
 
         if (!thread) {
-            return null;
+            return [404, {message: 'No thread found'}];
         }
 
-        return thread;
+        return [200, thread];
     }
 }
 

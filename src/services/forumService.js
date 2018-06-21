@@ -83,7 +83,7 @@ class ForumService extends DataBaseService {
 
         console.log(3);
 
-        const request = `INSERT INTO thread 
+        const request = `INSERT INTO threads
         (message${thread.created ? ', created' : ''}, title, author, forum${thread.slug ? ', slug' : ''})
              VALUES ('${thread.message}'
              ${thread.created ? `, '${thread.created}'` : ''} ,
