@@ -9,7 +9,7 @@ class UserService extends DataBaseService {
     async create(nickname, user) {
 
         const conflicts = await this.dataBase.manyOrNone(
-            `SELECT * from users WHERE LOWER(nickname) = LOWER('${nickname}') OR LOWER(email) = LOWER('${user}');`
+            `SELECT * from users WHERE LOWER(nickname) = LOWER('${nickname}') OR LOWER(email) = LOWER('${user.email}');`
         ).catch(reason => console.log(reason));
 
         if (conflicts.length !== 0) {
