@@ -20,6 +20,18 @@ class ThreadController {
         ctx.status = status;
         ctx.body = thread;
     }
+
+    async createPosts(ctx) {
+        const created = new Date();
+
+        const slugOrId = ctx.params['slug_or_id'];
+        const posts = ctx.request.body;
+
+        const [status, posts] = await threadService.createPosts(slugOrId, posts, created);
+
+        ctx.status = status;
+        ctx.body = posts;
+    }
 }
 
 const threadController = new ThreadController();
