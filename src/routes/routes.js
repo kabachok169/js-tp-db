@@ -14,6 +14,7 @@ router.get('/api/forum/:slug/details', forumController.get);
 
 router.post('/api/forum/:slug/create', forumController.createThread);
 router.get('/api/forum/:slug/threads', forumController.getThreads);
+router.get('/api/forum/:slug/users', forumController.getUsers);
 // userRouter.get('/api/user/:nickname/profile', userController.get);
 // userRouter.post('/api/user/:nickname/profile', userController.update);
 

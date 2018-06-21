@@ -123,7 +123,6 @@ class ForumService extends DataBaseService {
              ORDER BY threads.created ${desc ==='true' ? 'DESC' : 'ASC'} 
              ${limit ? ` LIMIT ${limit}` : ''}`
         );
-        console.log(limit);
 
         threads.forEach((item) => {
             item.id = +item.id;
@@ -132,7 +131,34 @@ class ForumService extends DataBaseService {
 
         return [200, threads];
     }
+
+    async getUsers(slug, since, limit, desc) {
+        const forum = await this.dataBase.oneOrNone(
+            this.checkForum(slug)
+        );
+
+        if (!forum) {
+            return [404, {message: 'No forum found'}];
+        }
+
+        const users = await this.dataBase.manyOrNone(
+            `SELECT nickname, fullname, about, email FROM users u
+             JOIN usersForums t ON LOWER(u.nickname) = LOWER(t.author)
+             WHERE LOWER(t.forum) = LOWER('{slug}') 
+            ${desc === 'true' ?
+                since ? ` AND LOWER(u.nickname) < LOWER('${since}')` : ''
+                :
+                since ? ` AND LOWER(u.nickname) > LOWER('${since}')` : ''
+                }
+             ORDER BY LOWER(u.nickname) ${desc ==='true' ? 'DESC' : 'ASC'} 
+             ${limit ? ` LIMIT ${limit}` : ''}`
+        );
+
+        return [200, users];
+    }
 }
+
+
 
 const forumService = new ForumService();
 export default forumService;
