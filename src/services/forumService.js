@@ -26,7 +26,7 @@ class ForumService extends DataBaseService {
 
         const newForum = await this.dataBase.one(
             `INSERT INTO forum (slug, title, author)
-             VALUES ('${forum.slug}', '${forum.title}', '${forum.user}') 
+             VALUES ('${forum.slug}', '${forum.title}', '${user.nickname}') 
              RETURNING *`
         ).catch(reason => console.log(reason));
 
@@ -35,58 +35,59 @@ class ForumService extends DataBaseService {
         return [201, newForum]
     }
 
-    async get(nickname) {
-        const user = await this.dataBase.oneOrNone(
-            `SELECT * FROM users WHERE LOWER(users.nickname) = LOWER('${nickname}');`
+    async get(slug) {
+        const forum = await this.dataBase.oneOrNone(
+            `SELECT * FROM forum WHERE LOWER(slug) = LOWER('${slug}');`
         );
-        console.log(user);
-        if (!user) {
+        console.log(forum);
+        if (!forum) {
             return [404, {message: 'No user found'}];
         }
 
-        return [200, user];
+        forum.user = forum.author;
+        return [200, forum];
     }
 
-    async update(nickname, userData) {
-        const user = await this.dataBase.one(
-            `SELECT * from users WHERE LOWER(nickname) = LOWER('${nickname}');`
-        ).catch(() => {return [404, {message:'User not found'}]});
+    async createThread(slug, thread) {
+        const user = await this.dataBase.oneOrNone(
+            `SELECT * FROM users WHERE LOWER(users.nickname) = LOWER('${thread.author}');`
+        );
+        const forum = await this.dataBase.oneOrNone(
+            `SELECT * FROM forum WHERE LOWER(slug) = LOWER('${slug}');`
+        );
 
-        if (!Object.keys(userData).length) {
-            return [200, user];
+        if (!forum || !user) {
+            return [404, {message: 'No forum found'}];
         }
 
-        if (userData.email) {
-            const conflictUser = await this.dataBase.oneOrNone(
-                `SELECT * from users WHERE LOWER(email) = LOWER('${userData.email}');`
-            );
+        await this.dataBase.oneOrNone(
+            `INSERT INTO usersForums (author, forum) 
+             SELECT '{author}', '{forum}' 
+             WHERE NOT EXISTS 
+             (SELECT forum FROM usersForums
+             WHERE LOWER(author) = LOWER('${thread.author}') AND forum = '${slug}')`
+        );
 
-            if (conflictUser) {
-                return [409, {message: 'User with this email exists'}]
+        let isSlug = '';
+        let threadSlug = null;
+
+        if (thread.slug) {
+            isSlug = ', slug';
+            threadSlug = thread.slug;
+            const thread = await this.dataBase.oneOrNone(this.checkThread);
+            if (thread) {
+                return [409, thread];
             }
         }
 
-        const updatedUser = await this.dataBase.one(this.createUpdateRequest(nickname, userData))
+        const newThread = await this.dataBase.one(
+            `INSERT INTO thread (created, message, title, author, forum${isSlug})
+             VALUES ('${thread.created}', '${thread.message}', '${thread.title}',
+             '${user.nickname}', '${slug}'${threadSlug}) RETURNING *;`
+        );
 
-        return [200, updatedUser];
-    }
+        return [201, newThread];
 
-    createUpdateRequest(nickname, user) {
-        console.log(user);
-        let request = 'UPDATE users SET ';
-        if (user.about) {
-            request += `about='${user.about}', `;
-        }
-        if (user.email) {
-            request += `email='${user.email}', `;
-        }
-        if (user.about) {
-            request += `fullname='${user.fullname}',`;
-        }
-        request = request.substr(0, request.length - 1);
-        request += ` WHERE LOWER(users.nickname) = LOWER('${nickname}') RETURNING *;`;
-        console.log(request);
-        return request;
     }
 }
 

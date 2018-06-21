@@ -22,9 +22,19 @@ class ForumController {
     }
 
     async get(ctx) {
-        const nickname = ctx.params['nickname'];
+        const slug = ctx.params['slug'];
 
-        const [status, result] = await forumService.get(nickname);
+        const [status, result] = await forumService.get(slug);
+
+        ctx.body = result;
+        ctx.status = status;
+    }
+
+    async createThread(ctx) {
+        const slug = ctx.params['slug'];
+        const thread = ctx.request.body;
+
+        const [status, result] = await forumService.createThread(slug, thread);
 
         ctx.body = result;
         ctx.status = status;

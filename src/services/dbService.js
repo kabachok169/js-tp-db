@@ -7,6 +7,18 @@ export default class DataBaseService {
     this._pgp = dataBase.pgp;
   }
 
+  checkUser(nickname) {
+    return `SELECT * FROM users WHERE LOWER(users.nickname) = LOWER('${nickname}');`;
+  }
+
+  checkForum(slug) {
+    return `SELECT * FROM forum WHERE LOWER(slug) = LOWER('${slug}');`;
+  }
+
+  checkThread(slug) {
+    return `'SELECT * FROM thread WHERE LOWER(thread.slug) = LOWER('${slug}');`;
+  }
+
   get pgp() {
     return this._pgp;
   }
