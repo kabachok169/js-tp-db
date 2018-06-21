@@ -8,6 +8,7 @@ class ThreadService extends DataBaseService {
         this.queries = {
             find_by_id: "SELECT * FROM threads WHERE id = $1;",
             find_by_slug: "SELECT * FROM threads WHERE lower(slug) = lower($1);",
+
         }
 
         this.isID = val => +val;        
@@ -32,6 +33,33 @@ class ThreadService extends DataBaseService {
 
         return [200, thread];
     }
+
+    async updateByIdOrSlug(slugOrId, updates) {
+
+        // let [status, thread] = this.getByIdOrSlug(slugOrId)
+
+        // if (status === 404) {
+        //     return [status, thread]
+        // }
+
+        // let request = `UPDATE threads SET 
+        //                     ${user.about ? `about='${user.about}',` : ''} 
+        //                     ${user.email ? `email='${user.email}',` : ''}
+        //                     ${user.fullname ? `fullname='${user.fullname}',` : ''}`;
+
+        // // console.log(request)
+        // // console.log(request.lastIndexOf(','))
+        // request = request.substr(0, request.lastIndexOf(','));
+        // // console.log(request)
+        // request += ` WHERE id = ${} RETURNING *;`;
+        // // console.log(request);
+        // return request;
+
+
+        return [200, thread];
+    }
+
+
 }
 
 
