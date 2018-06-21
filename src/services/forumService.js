@@ -8,7 +8,7 @@ class ForumService extends DataBaseService {
 
     async create(forum) {
         const user = await this.dataBase.oneOrNone(
-            `SELECT * FROM users WHERE LOWER(users.nickname) = LOWER('${forum.user}');`
+            this.checkUser(forum.user)
         );
 
         if (!user) {
@@ -37,7 +37,7 @@ class ForumService extends DataBaseService {
 
     async get(slug) {
         const forum = await this.dataBase.oneOrNone(
-            `SELECT * FROM forum WHERE LOWER(slug) = LOWER('${slug}');`
+            this.checkForum(slug)
         );
         // console.log(forum);
         if (!forum) {
@@ -51,10 +51,10 @@ class ForumService extends DataBaseService {
     async createThread(slug, thread) {
         // console.log(1);
         const user = await this.dataBase.oneOrNone(
-            `SELECT * FROM users WHERE LOWER(users.nickname) = LOWER('${thread.author}');`
+            this.checkUser(thread.author)
         );
         const forum = await this.dataBase.oneOrNone(
-            `SELECT * FROM forum WHERE LOWER(slug) = LOWER('${slug}');`
+            this.checkForum(slug)
         );
 
         if (!forum || !user) {
@@ -106,7 +106,7 @@ class ForumService extends DataBaseService {
 
     async getThreads(slug, since, limit, desc) {
         const forum = await this.dataBase.oneOrNone(
-            `SELECT * FROM forum WHERE LOWER(slug) = LOWER('${slug}');`
+            this.checkForum(slug)
         );
 
         if (!forum) {
@@ -114,13 +114,13 @@ class ForumService extends DataBaseService {
         }
 
         const threads = await this.dataBase.manyOrNone(
-            `SELECT * FROM thread WHERE LOWER(thread.forum) = LOWER('${slug}') 
+            `SELECT * FROM threads WHERE LOWER(threads.forum) = LOWER('${slug}') 
             ${desc === 'true' ?
-                since ? ` AND thread.created <= '${since}'` : '' 
+                since ? ` AND threads.created <= '${since}'` : '' 
                 :
-                since ? ` AND thread.created >= '${since}'` : ''
+                since ? ` AND threads.created >= '${since}'` : ''
             }
-             ORDER BY thread.created ${desc ==='true' ? 'DESC' : 'ASC'} 
+             ORDER BY threads.created ${desc ==='true' ? 'DESC' : 'ASC'} 
              ${limit ? ` LIMIT ${limit}` : ''}`
         );
         console.log(limit);
