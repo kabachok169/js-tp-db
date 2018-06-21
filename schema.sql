@@ -29,7 +29,7 @@ CREATE TABLE forum
 CREATE INDEX IF NOT EXISTS indexForumsUser ON forum(author);
 CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueSlugForums ON forum(slug);
 
-CREATE TABLE thread
+CREATE TABLE threads
 (
   id BIGSERIAL PRIMARY KEY,
   slug CITEXT UNIQUE,
