@@ -49,6 +49,7 @@ class ForumService extends DataBaseService {
     }
 
     async createThread(slug, thread) {
+        console.log(1);
         const user = await this.dataBase.oneOrNone(
             `SELECT * FROM users WHERE LOWER(users.nickname) = LOWER('${thread.author}');`
         );
@@ -62,31 +63,48 @@ class ForumService extends DataBaseService {
 
         await this.dataBase.oneOrNone(
             `INSERT INTO usersForums (author, forum) 
-             SELECT '{author}', '{forum}' 
+             SELECT '${user.nickname}', '${slug}' 
              WHERE NOT EXISTS 
              (SELECT forum FROM usersForums
-             WHERE LOWER(author) = LOWER('${thread.author}') AND forum = '${slug}')`
+             WHERE LOWER(author) = LOWER('${user.nickname}') AND forum = '${slug}')`
         );
 
-        let isSlug = '';
-        let threadSlug = null;
+        console.log(2);
 
         if (thread.slug) {
-            isSlug = ', slug';
-            threadSlug = thread.slug;
-            const thread = await this.dataBase.oneOrNone(this.checkThread);
-            if (thread) {
-                return [409, thread];
+            const oldThread = await this.dataBase.oneOrNone(this.checkThread(thread.slug));
+
+            if (oldThread) {
+                oldThread.id = +oldThread.id;
+                oldThread.votes = + oldThread.votes;
+                return [409, oldThread];
             }
         }
 
+        console.log(3);
+
+        const request = `INSERT INTO thread 
+        (message${thread.created ? ', created' : ''}, title, author, forum${thread.slug ? ', slug' : ''})
+             VALUES ('${thread.message}'
+             ${thread.created ? `, '${thread.created}'` : ''} ,
+             '${thread.title}',
+             '${user.nickname}',
+             '${slug}'${thread.slug ? `, '${thread.slug}'` : ''})
+              RETURNING *;`;
+        console.log(request);
+
         const newThread = await this.dataBase.one(
-            `INSERT INTO thread (created, message, title, author, forum${isSlug})
-             VALUES ('${thread.created}', '${thread.message}', '${thread.title}',
-             '${user.nickname}', '${slug}'${threadSlug}) RETURNING *;`
+            request
         );
 
+        newThread.id = +newThread.id;
+        newThread.votes = +newThread.votes;
+
         return [201, newThread];
+
+    }
+
+    async getThreads(slug) {
 
     }
 }

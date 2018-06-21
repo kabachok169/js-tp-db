@@ -10,6 +10,8 @@ router.get('/api/user/:nickname/profile', userController.get);
 
 router.post('/api/forum/create', forumController.create);
 router.get('/api/forum/:slug/details', forumController.get);
+
+router.post('/api/forum/:slug/create', forumController.createThread);
 // userRouter.get('/api/user/:nickname/profile', userController.get);
 // userRouter.post('/api/user/:nickname/profile', userController.update);
 

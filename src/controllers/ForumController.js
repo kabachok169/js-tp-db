@@ -39,6 +39,15 @@ class ForumController {
         ctx.body = result;
         ctx.status = status;
     }
+
+    async getThreads(ctx) {
+        const slug = ctx.params['slug'];
+
+        const [status, result] = await forumService.getThreads(slug);
+
+        ctx.body = result;
+        ctx.status = status;
+    }
 }
 
 const forumController = new ForumController();
