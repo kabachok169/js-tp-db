@@ -39,7 +39,7 @@ class ForumService extends DataBaseService {
         const forum = await this.dataBase.oneOrNone(
             `SELECT * FROM forum WHERE LOWER(slug) = LOWER('${slug}');`
         );
-        console.log(forum);
+        // console.log(forum);
         if (!forum) {
             return [404, {message: 'No user found'}];
         }
@@ -49,7 +49,7 @@ class ForumService extends DataBaseService {
     }
 
     async createThread(slug, thread) {
-        console.log(1);
+        // console.log(1);
         const user = await this.dataBase.oneOrNone(
             `SELECT * FROM users WHERE LOWER(users.nickname) = LOWER('${thread.author}');`
         );
@@ -69,7 +69,7 @@ class ForumService extends DataBaseService {
              WHERE LOWER(author) = LOWER('${user.nickname}') AND forum = '${slug}')`
         );
 
-        console.log(2);
+        // console.log(2);
 
         if (thread.slug) {
             const oldThread = await this.dataBase.oneOrNone(this.checkThread(thread.slug));
@@ -81,9 +81,9 @@ class ForumService extends DataBaseService {
             }
         }
 
-        console.log(3);
+        // console.log(3);
 
-        const request = `INSERT INTO thread 
+        const request = `INSERT INTO threads
         (message${thread.created ? ', created' : ''}, title, author, forum${thread.slug ? ', slug' : ''})
              VALUES ('${thread.message}'
              ${thread.created ? `, '${thread.created}'` : ''} ,
@@ -91,7 +91,7 @@ class ForumService extends DataBaseService {
              '${user.nickname}',
              '${slug}'${thread.slug ? `, '${thread.slug}'` : ''})
               RETURNING *;`;
-        console.log(request);
+        // console.log(request);
 
         const newThread = await this.dataBase.one(
             request
