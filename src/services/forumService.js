@@ -1,32 +1,38 @@
 import DataBaseService from './dbService';
 
-class UserService extends DataBaseService {
+class ForumService extends DataBaseService {
 
     constructor() {
         super();
     }
-  
-    async create(nickname, user) {
 
-        const conflicts = await this.dataBase.manyOrNone(
-            `SELECT * from users WHERE LOWER(nickname) = LOWER('${nickname}') OR LOWER(email) = LOWER('${user.email}');`
-        ).catch(reason => console.log(reason));
+    async create(forum) {
+        const user = await this.dataBase.oneOrNone(
+            `SELECT * FROM users WHERE LOWER(users.nickname) = LOWER('${forum.user}');`
+        );
 
-        if (conflicts.length !== 0) {
-            if (conflicts.length === 2 && conflicts[0].nickname === conflicts[1].nickname) {
-                conflicts.pop();
-            }
-
-            return [null, conflicts]
+        if (!user) {
+            return [404, {message: 'User not found'}];
         }
 
-        const newUser = await this.dataBase.one(
-            `INSERT INTO users (nickname, email, fullname, about)
-             VALUES ('${nickname}', '${user.email}', '${user.fullname}', '${user.about}') 
+        const conflict = await this.dataBase.oneOrNone(
+            `SELECT * from forum WHERE LOWER(slug) = LOWER('${forum.slug}');`
+        ).catch(reason => console.log(reason));
+
+        if (conflict) {
+            conflict.user = conflict.author;
+            return [409, conflict]
+        }
+
+        const newForum = await this.dataBase.one(
+            `INSERT INTO forum (slug, title, author)
+             VALUES ('${forum.slug}', '${forum.title}', '${forum.user}') 
              RETURNING *`
         ).catch(reason => console.log(reason));
 
-        return [newUser, null]
+        newForum.user = newForum.author;
+
+        return [201, newForum]
     }
 
     async get(nickname) {
@@ -42,13 +48,9 @@ class UserService extends DataBaseService {
     }
 
     async update(nickname, userData) {
-        const user = await this.dataBase.oneOrNone(
+        const user = await this.dataBase.one(
             `SELECT * from users WHERE LOWER(nickname) = LOWER('${nickname}');`
-        );
-
-        if (!user) {
-            return [404, {message: 'No user found'}];
-        }
+        ).catch(() => {return [404, {message:'User not found'}]});
 
         if (!Object.keys(userData).length) {
             return [200, user];
@@ -73,12 +75,12 @@ class UserService extends DataBaseService {
         console.log(user);
         let request = 'UPDATE users SET ';
         if (user.about) {
-            request += `about='${user.about}',`;
+            request += `about='${user.about}', `;
         }
         if (user.email) {
-            request += `email='${user.email}',`;
+            request += `email='${user.email}', `;
         }
-        if (user.fullname) {
+        if (user.about) {
             request += `fullname='${user.fullname}',`;
         }
         request = request.substr(0, request.length - 1);
@@ -88,5 +90,5 @@ class UserService extends DataBaseService {
     }
 }
 
-const userService = new UserService();
-export default userService;
+const forumService = new ForumService();
+export default forumService;
