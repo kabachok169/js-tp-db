@@ -59,7 +59,9 @@ class ThreadService extends DataBaseService {
         return [200, thread];
     }
 
+    async createPosts(slugOrId, updates, date) {
 
+    }
 }
 
 
