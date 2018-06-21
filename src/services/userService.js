@@ -71,17 +71,16 @@ class UserService extends DataBaseService {
 
     createUpdateRequest(nickname, user) {
         console.log(user);
-        let request = 'UPDATE users SET ';
-        if (user.about) {
-            request += `about='${user.about}',`;
-        }
-        if (user.email) {
-            request += `email='${user.email}',`;
-        }
-        if (user.fullname) {
-            request += `fullname='${user.fullname}',`;
-        }
-        request = request.substr(0, request.length - 1);
+
+        let request = `UPDATE users SET 
+                            ${user.about ? `about='${user.about}',` : ''} 
+                            ${user.email ? `email='${user.email}',` : ''}
+                             ${user.fullname ? `fullname='${user.fullname}',` : ''}`;
+
+        // console.log(request)
+        // console.log(request.lastIndexOf(','))
+        request = request.substr(0, request.lastIndexOf(','));
+        // console.log(request)
         request += ` WHERE LOWER(users.nickname) = LOWER('${nickname}') RETURNING *;`;
         console.log(request);
         return request;
