@@ -75,7 +75,7 @@ class UserService extends DataBaseService {
         let request = `UPDATE users SET 
                             ${user.about ? `about='${user.about}',` : ''} 
                             ${user.email ? `email='${user.email}',` : ''}
-                             ${user.fullname ? `fullname='${user.fullname}',` : ''}`;
+                            ${user.fullname ? `fullname='${user.fullname}',` : ''}`;
 
         // console.log(request)
         // console.log(request.lastIndexOf(','))

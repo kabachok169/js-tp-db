@@ -8,7 +8,6 @@ class ThreadService extends DataBaseService {
         this.queries = {
             find_by_id: "SELECT * FROM threads WHERE id = $1;",
             find_by_slug: "SELECT * FROM threads WHERE lower(slug) = lower($1);",
-
         }
 
         this.isID = val => +val;        
@@ -29,34 +28,37 @@ class ThreadService extends DataBaseService {
             return [404, {message: 'No thread found'}];
         }
 
-        [thread.id, thread.votes] = [+thread.id, +thread.votes]
+        [thread.id, thread.votes] = [+thread.id, +thread.votes];
 
         return [200, thread];
     }
 
     async updateByIdOrSlug(slugOrId, updates) {
 
-        // let [status, thread] = this.getByIdOrSlug(slugOrId)
+        let [status, thread] = await this.getByIdOrSlug(slugOrId)
 
-        // if (status === 404) {
-        //     return [status, thread]
-        // }
+        if (status === 404) {
+            return [status, thread];
+        }
 
-        // let request = `UPDATE threads SET 
-        //                     ${user.about ? `about='${user.about}',` : ''} 
-        //                     ${user.email ? `email='${user.email}',` : ''}
-        //                     ${user.fullname ? `fullname='${user.fullname}',` : ''}`;
+        if (!Object.keys(updates).length) {
+            return [200, thread];
+        }
 
-        // // console.log(request)
-        // // console.log(request.lastIndexOf(','))
-        // request = request.substr(0, request.lastIndexOf(','));
-        // // console.log(request)
-        // request += ` WHERE id = ${} RETURNING *;`;
-        // // console.log(request);
-        // return request;
+        let request = `UPDATE threads SET 
+                            ${updates.message ? `message='${updates.message}',` : ''} 
+                            ${updates.title ? `title='${updates.title}',` : ''}`;
 
+      
+        request = request.substr(0, request.lastIndexOf(',')) + ` WHERE id = ${thread.id} RETURNING *;`;
 
-        return [200, thread];
+       
+        const updatedThread = await this.dataBase.oneOrNone(request);
+        [updatedThread.id, updatedThread.votes] = [+updatedThread.id, +updatedThread.votes];
+        console.log(thread);
+        console.log(updatedThread);
+
+        return [200, updatedThread];
     }
 
 

@@ -13,7 +13,7 @@ class ThreadController {
 
     async threadUpdate(ctx) {
         const slugOrId = ctx.params['slug_or_id'];
-        const updates = ctx.body;
+        const updates = ctx.request.body;
 
         const [status, thread] = await threadService.updateByIdOrSlug(slugOrId, updates);
 
