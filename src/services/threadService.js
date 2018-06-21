@@ -9,14 +9,15 @@ class ThreadService extends DataBaseService {
             find_by_id: "SELECT * FROM threads WHERE id = $1;",
             find_by_slug: "SELECT * FROM threads WHERE lower(slug) = lower($1);",
         }
+
+        this.isID = val => +val;        
     }
 
     async getByIdOrSlug(slugOrId) {
 
-        if (isNumeric(slugOrId)) {
+        let query = this.queries.find_by_slug;
+        if (this.isID(slugOrId)) {
             query = this.queries.find_by_id;
-        } else {
-            query = this.queries.find_by_slug;
         }
 
         const thread = await this.dataBase.oneOrNone(query, slugOrId);
@@ -26,6 +27,8 @@ class ThreadService extends DataBaseService {
         if (!thread) {
             return [404, {message: 'No thread found'}];
         }
+
+        [thread.id, thread.votes] = [+thread.id, +thread.votes]
 
         return [200, thread];
     }

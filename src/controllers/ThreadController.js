@@ -1,5 +1,4 @@
 import threadService from '../services/threadService';
-import { isNull } from 'util';
 
 class ThreadController {
 

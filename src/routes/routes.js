@@ -16,6 +16,6 @@ router.post('/api/forum/:slug/create', forumController.createThread);
 // userRouter.get('/api/user/:nickname/profile', userController.get);
 // userRouter.post('/api/user/:nickname/profile', userController.update);
 
-router.get('/api/thread/{slug_or_id}/details', threadController.threadDetails);
+router.get('/api/thread/:slug_or_id/details', threadController.threadDetails);
 
 export default router;
