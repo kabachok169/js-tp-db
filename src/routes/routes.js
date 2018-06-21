@@ -21,4 +21,5 @@ router.get('/api/forum/:slug/users', forumController.getUsers);
 router.get('/api/thread/:slug_or_id/details', threadController.threadDetails);
 router.post('/api/thread/:slug_or_id/details', threadController.threadUpdate);
 
+
 export default router;
