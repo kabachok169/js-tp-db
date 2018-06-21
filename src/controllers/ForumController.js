@@ -40,10 +40,25 @@ class ForumController {
         ctx.status = status;
     }
 
+    async getUsers(ctx) {
+        const slug = ctx.params['slug'];
+        const since = ctx.query['since'];
+        const limit = ctx.query['limit'];
+        const desc = ctx.query['desc'];
+
+        const [status, result] = await forumService.getUsers(slug, since, limit, desc);
+
+        ctx.body = result;
+        ctx.status = status;
+    }
+
     async getThreads(ctx) {
         const slug = ctx.params['slug'];
+        const since = ctx.query['since'];
+        const limit = ctx.query['limit'];
+        const desc = ctx.query['desc'];
 
-        const [status, result] = await forumService.getThreads(slug);
+        const [status, result] = await forumService.getThreads(slug, since, limit, desc);
 
         ctx.body = result;
         ctx.status = status;

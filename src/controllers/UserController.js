@@ -8,7 +8,7 @@ class UserController {
 
         const [newUser, conflictUsers] = await userService.create(nickname, user);
 
-        console.log(newUser, conflictUsers);
+        // console.log(newUser, conflictUsers);
 
         if (newUser === null) {
             ctx.body = conflictUsers;

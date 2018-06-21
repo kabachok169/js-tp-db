@@ -8,7 +8,7 @@ class ForumService extends DataBaseService {
 
     async create(forum) {
         const user = await this.dataBase.oneOrNone(
-            `SELECT * FROM users WHERE LOWER(users.nickname) = LOWER('${forum.user}');`
+            this.checkUser(forum.user)
         );
 
         if (!user) {
@@ -37,9 +37,9 @@ class ForumService extends DataBaseService {
 
     async get(slug) {
         const forum = await this.dataBase.oneOrNone(
-            `SELECT * FROM forum WHERE LOWER(slug) = LOWER('${slug}');`
+            this.checkForum(slug)
         );
-        console.log(forum);
+        // console.log(forum);
         if (!forum) {
             return [404, {message: 'No user found'}];
         }
@@ -49,12 +49,12 @@ class ForumService extends DataBaseService {
     }
 
     async createThread(slug, thread) {
-        console.log(1);
+        // console.log(1);
         const user = await this.dataBase.oneOrNone(
-            `SELECT * FROM users WHERE LOWER(users.nickname) = LOWER('${thread.author}');`
+            this.checkUser(thread.author)
         );
         const forum = await this.dataBase.oneOrNone(
-            `SELECT * FROM forum WHERE LOWER(slug) = LOWER('${slug}');`
+            this.checkForum(slug)
         );
 
         if (!forum || !user) {
@@ -69,7 +69,7 @@ class ForumService extends DataBaseService {
              WHERE LOWER(author) = LOWER('${user.nickname}') AND forum = '${slug}')`
         );
 
-        console.log(2);
+        // console.log(2);
 
         if (thread.slug) {
             const oldThread = await this.dataBase.oneOrNone(this.checkThread(thread.slug));
@@ -81,9 +81,9 @@ class ForumService extends DataBaseService {
             }
         }
 
-        console.log(3);
+        // console.log(3);
 
-        const request = `INSERT INTO thread 
+        const request = `INSERT INTO threads
         (message${thread.created ? ', created' : ''}, title, author, forum${thread.slug ? ', slug' : ''})
              VALUES ('${thread.message}'
              ${thread.created ? `, '${thread.created}'` : ''} ,
@@ -91,7 +91,7 @@ class ForumService extends DataBaseService {
              '${user.nickname}',
              '${slug}'${thread.slug ? `, '${thread.slug}'` : ''})
               RETURNING *;`;
-        console.log(request);
+        // console.log(request);
 
         const newThread = await this.dataBase.one(
             request
@@ -104,10 +104,61 @@ class ForumService extends DataBaseService {
 
     }
 
-    async getThreads(slug) {
+    async getThreads(slug, since, limit, desc) {
+        const forum = await this.dataBase.oneOrNone(
+            this.checkForum(slug)
+        );
 
+        if (!forum) {
+            return [404, {message: 'No forum found'}];
+        }
+
+        const threads = await this.dataBase.manyOrNone(
+            `SELECT * FROM threads WHERE LOWER(threads.forum) = LOWER('${slug}') 
+            ${desc === 'true' ?
+                since ? ` AND threads.created <= '${since}'` : '' 
+                :
+                since ? ` AND threads.created >= '${since}'` : ''
+            }
+             ORDER BY threads.created ${desc ==='true' ? 'DESC' : 'ASC'} 
+             ${limit ? ` LIMIT ${limit}` : ''}`
+        );
+
+        threads.forEach((item) => {
+            item.id = +item.id;
+            item.votes = +item.votes;
+        });
+
+        return [200, threads];
+    }
+
+    async getUsers(slug, since, limit, desc) {
+        const forum = await this.dataBase.oneOrNone(
+            this.checkForum(slug)
+        );
+
+        if (!forum) {
+            return [404, {message: 'No forum found'}];
+        }
+
+        const users = await this.dataBase.manyOrNone(
+            `SELECT nickname, fullname, about, email FROM users u
+             JOIN usersForums t ON LOWER(u.nickname) = LOWER(t.author)
+             WHERE LOWER(t.forum) = LOWER('{slug}') 
+            ${desc === 'true' ?
+                since ? ` AND LOWER(u.nickname) < LOWER('${since}')` : ''
+                :
+                since ? ` AND LOWER(u.nickname) > LOWER('${since}')` : ''
+                }
+             ORDER BY LOWER(u.nickname) ${desc ==='true' ? 'DESC' : 'ASC'} 
+             ${limit ? ` LIMIT ${limit}` : ''}`
+        );
+
+        return [200, users];
     }
 }
+
+
 
 const forumService = new ForumService();
 export default forumService;

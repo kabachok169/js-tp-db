@@ -33,7 +33,7 @@ class UserService extends DataBaseService {
         const user = await this.dataBase.oneOrNone(
             `SELECT * FROM users WHERE LOWER(users.nickname) = LOWER('${nickname}');`
         );
-        console.log(user);
+        // console.log(user);
         if (!user) {
             return [404, {message: 'No user found'}];
         }
@@ -70,7 +70,7 @@ class UserService extends DataBaseService {
     }
 
     createUpdateRequest(nickname, user) {
-        console.log(user);
+        // console.log(user);
 
         let request = `UPDATE users SET 
                             ${user.about ? `about='${user.about}',` : ''} 
@@ -82,7 +82,7 @@ class UserService extends DataBaseService {
         request = request.substr(0, request.lastIndexOf(','));
         // console.log(request)
         request += ` WHERE LOWER(users.nickname) = LOWER('${nickname}') RETURNING *;`;
-        console.log(request);
+        // console.log(request);
         return request;
     }
 }

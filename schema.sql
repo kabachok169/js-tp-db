@@ -29,7 +29,7 @@ CREATE TABLE forum
 CREATE INDEX IF NOT EXISTS indexForumsUser ON forum(author);
 CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueSlugForums ON forum(slug);
 
-CREATE TABLE thread
+CREATE TABLE threads
 (
   id BIGSERIAL PRIMARY KEY,
   slug CITEXT UNIQUE,
@@ -43,9 +43,9 @@ CREATE TABLE thread
 
 -- CREATE INDEX IF NOT EXISTS indexThreadUser ON thread(author);
 -- CREATE INDEX IF NOT EXISTS indexThreadForum ON thread(forum);
-CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueSlugThread ON thread(slug);
+CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueSlugThread ON threads(slug);
 
-CREATE TABLE messages (
+CREATE TABLE posts (
   id SERIAL NOT NULL PRIMARY KEY,
 
   author VARCHAR NOT NULL REFERENCES users(nickname),
@@ -54,7 +54,7 @@ CREATE TABLE messages (
   isEdited BOOLEAN DEFAULT FALSE,
   message TEXT NOT NULL,
   parent INTEGER DEFAULT 0,
-  thread INTEGER NOT NULL REFERENCES thread(id),
+  threads INTEGER NOT NULL REFERENCES threads(id),
   path BIGINT ARRAY
 );
 
@@ -72,7 +72,7 @@ CREATE TABLE votes
 (
   voice INT CHECK (voice in (1, -1)),
   nickname VARCHAR REFERENCES users (nickname),
-  thread BIGINT REFERENCES thread (id)
+  thread BIGINT REFERENCES threads (id)
   -- CONSTRAINT unique_vote UNIQUE (userid, threadid)
 );
 
