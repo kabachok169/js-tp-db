@@ -19,7 +19,6 @@ class UserService extends DataBaseService {
 
             return [null, conflicts]
         }
-        console.log(1);
 
         const newUser = await this.dataBase.one(
             `INSERT INTO users (nickname, email, fullname, about)
@@ -28,6 +27,60 @@ class UserService extends DataBaseService {
         ).catch(reason => console.log(reason));
 
         return [newUser, null]
+    }
+
+    async get(nickname) {
+        const user = await this.dataBase.oneOrNone(
+            `SELECT * FROM users WHERE LOWER(users.nickname) = LOWER('${nickname}');`
+        );
+        console.log(user);
+        if (!user) {
+            return [404, {message: 'No user found'}];
+        }
+
+        return [200, user];
+    }
+
+    async update(nickname, userData) {
+        const user = await this.dataBase.one(
+            `SELECT * from users WHERE LOWER(nickname) = LOWER('${nickname}');`
+        ).catch(() => {return [404, {message:'User not found'}]});
+
+        if (!Object.keys(userData).length) {
+            return [200, user];
+        }
+
+        if (userData.email) {
+            const conflictUser = await this.dataBase.oneOrNone(
+                `SELECT * from users WHERE LOWER(email) = LOWER('${userData.email}');`
+            );
+
+            if (conflictUser) {
+                return [409, {message: 'User with this email exists'}]
+            }
+        }
+
+        const updatedUser = await this.dataBase.one(this.createUpdateRequest(nickname, userData))
+
+        return [200, updatedUser];
+    }
+
+    createUpdateRequest(nickname, user) {
+        console.log(user);
+        let request = 'UPDATE users SET ';
+        if (user.about) {
+            request += `about='${user.about}', `;
+        }
+        if (user.email) {
+            request += `email='${user.email}', `;
+        }
+        if (user.about) {
+            request += `fullname='${user.fullname}',`;
+        }
+        request = request.substr(0, request.length - 1);
+        request += ` WHERE LOWER(users.nickname) = LOWER('${nickname}') RETURNING *;`;
+        console.log(request);
+        return request;
     }
 }
 
