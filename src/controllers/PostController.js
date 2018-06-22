@@ -1,5 +1,4 @@
 import postService from '../services/postService';
-import forumService from "../services/forumService";
 
 class PostController {
 
@@ -38,7 +37,7 @@ class PostController {
         const sort = ctx.query['sort'];
         const desc = ctx.query['desc'];
 
-        const [status, result] = await threadService.getPosts(theadSlugOrId, limit, since, sort);
+        const [status, result] = await postService.getPosts(theadSlugOrId, limit, since, sort, desc);
 
         ctx.body = result;
         ctx.status = status;

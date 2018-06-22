@@ -91,7 +91,7 @@ class ThreadService extends DataBaseService {
         const thread = await this.dataBase.oneOrNone(query, slugOrId);
         thread.id = +thread.id;
 
-        console.log('got thread');
+        // console.log('got thread');
 
         if (!thread) {
             return [404, {message: 'No thread found'}];
@@ -113,9 +113,10 @@ class ThreadService extends DataBaseService {
 
         const sum = oldVote.voice + vote.voice;
 
-        console.log('check votes...');
+        // console.log('check votes...');
 
         if (sum === 2 || sum === -2) {
+            thread.votes = +thread.votes; 
             return [200, thread];
         } else if (!sum) {
             await this.dataBase.none(

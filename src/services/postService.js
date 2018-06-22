@@ -83,8 +83,10 @@ class PostService extends DataBaseService {
 
         if (parents.length) {
             const idLine = parents.join(', ');
+            console.log(idLine);
             const foundParents = await this.dataBase.manyOrNone(
-                `SELECT id FROM posts WHERE thread = ${thread.id}} AND id = ANY(ARRAY[${idLine}]::BIGINT[]);`);
+                `SELECT id FROM posts WHERE thread = ${thread.id} AND id = ANY(ARRAY[${idLine}]::BIGINT[]);`
+            ).catch(reason => console.log(reason));
             
             if (foundParents.length < parents.length) {
                 return [409, {message: 'Some parents are wrong'}];
@@ -104,7 +106,7 @@ class PostService extends DataBaseService {
             // console.log(author);
             const result = await this.dataBase.oneOrNone(
                 `insert into posts (parent, author, forum, thread, created, message) 
-                    values (${ post.parent ? post.parent : 0} , '${post.author}',
+                    values (${post.parent ? post.parent : 0} , '${post.author}',
                     '${forumSlug}', ${threadID}, '${created.toISOString()}', '${post.message}') returning *;`                
             ).catch(reason => console.log(reason));
 
@@ -134,9 +136,9 @@ class PostService extends DataBaseService {
         return [...candidates];
     }
 
-    async getPosts(slugOrId, limit, since, sort) {
-        let [status, thread] = await threadService.getByIdOrSlug(slugOrId)
+    async getPosts(slugOrId, limit, since, sort, desc) {
 
+        const [status, thread] = await threadService.getByIdOrSlug(slugOrId);
         if (status === 404) {
             return [status, thread];
         }
@@ -145,17 +147,21 @@ class PostService extends DataBaseService {
             let request = `SELECT * FROM posts where thread = ${thread.id} 
                         ${desc ? (since ? 'AND path > (SELECT path FROM messages WHERE id = ' + since + ')' : '') 
                             : (since ? 'AND path < (SELECT path FROM messages WHERE id = ' + since + ')' : '')}
-                        OREDER BY path ${desc ? 'DESC' : 'ASC'}, id ${desc ? 'DESC' : 'ASC'} ${limit ? 'LIMIT ' + limit : ''}`;
+                        ORDER BY path ${desc ? 'DESC' : 'ASC'}, id ${desc ? 'DESC' : 'ASC'} ${limit ? 'LIMIT ' + limit : ''}`;
             
             const result = await this.dataBase.manyOrNone(request);
+
+            result.forEach(post => {post.id = +post.id; post.parent = +post.parent; delete post.path; console.log(post)});
             return [200, result];
         }
         if (sort === 'flat') {
             let request = `SELECT * FROM posts where thread = ${thread.id} 
                         ${desc ? (since ? 'AND id > ' + since : '') : (since ? 'AND id < ' + since : '')}
-                        OREDER BY created ${desc ? 'DESC' : 'ASC'}, id ${desc ? 'DESC' : 'ASC'} ${limit ? 'LIMIT ' + limit : ''}`;
+                        ORDER BY created ${desc ? 'DESC' : 'ASC'}, id ${desc ? 'DESC' : 'ASC'} ${limit ? 'LIMIT ' + limit : ''}`;
             
             const result = await this.dataBase.manyOrNone(request);
+
+            result.forEach(post => {post.id = +post.id; post.parent = +post.parent; delete post.path; console.log(post)});
             return [200, result];
         }
     }
