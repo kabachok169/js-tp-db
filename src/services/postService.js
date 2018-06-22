@@ -69,10 +69,12 @@ class PostService extends DataBaseService {
     selectParents(posts) {
 
         let candidates = new Set();
+        let idSet = new Set();
 
         posts.forEach(post => candidates.add(post.parent));
+        posts.forEach(post => idSet.add(post.id));
 
-        const parents = posts.map(post => post.id).filter(id => !candidates.has(id));
+        const parents = candidates.array.filter(id => !idSet.has(id));
 
         return parents;
     }
