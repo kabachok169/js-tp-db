@@ -202,38 +202,39 @@ class PostService extends DataBaseService {
             });
             return [200, result];
         }
-        if (sort === 'parent_tree') {
-            const parents = await this.dataBase.manyOrNone(
-                this.getParents(thread.id, since, desc, limit)
-            ).catch(reason => console.log(reason));
+        
+        // parent tree sort
+        const parents = await this.dataBase.manyOrNone(
+            this.getParents(thread.id, since, desc, limit)
+        ).catch(reason => console.log(reason));
 
-            let posts = [];
-            for (let parentID of parents) {
-                let request = `SELECT * FROM posts where thread = ${thread.id} AND path[1] = ${parentID.id}
-                        ${desc === 'true' ? (since ? `AND path[1] < (SELECT path[1] FROM posts WHERE id = ${since})` : '')
-                    : (since ? ` AND path[1] > (SELECT path[1] FROM posts WHERE id = ${since})` : '')}
-                        ORDER BY path, id`;
-                
-                const result = await this.dataBase.manyOrNone(request).catch(reason => console.log(request, reason));
-                posts = posts.concat(result);
-            }
-
-            posts.forEach(post => {
-                post.id = +post.id; 
-                post.parent = +post.parent; 
-                // delete post.path;
-            });
-
-            return [200, posts];
+        let posts = [];
+        for (let parentID of parents) {
+            let request = `SELECT * FROM posts where thread = ${thread.id} AND path[1] = ${parentID.id}
+                    ${desc === 'true' ? (since ? `AND path[1] < (SELECT path[1] FROM posts WHERE id = ${since})` : '')
+                : (since ? ` AND path[1] > (SELECT path[1] FROM posts WHERE id = ${since})` : '')}
+                    ORDER BY path, id`;
+            
+            const result = await this.dataBase.manyOrNone(request).catch(reason => console.log(request, reason));
+            posts.push(...result);
         }
+
+        posts.forEach(post => {
+            post.id = +post.id; 
+            post.parent = +post.parent; 
+            // delete post.path;
+        });
+
+        return [200, posts];
+        
     }
 
     getParents(threadId, since, desc, limit) {
         const request =
             `SELECT id FROM posts WHERE thread = ${threadId} AND parent = 0${desc === 'true' ? 
-                (since ? ` AND path[1] < (SELECT path[1] FROM posts WHERE id = ${since})` : '') :
-                (since ? ` AND path[1] > (SELECT path[1] FROM posts WHERE id = ${since})` : '')}
-            ORDER BY id ${desc === 'true' ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit};` : ''}`;
+                (since ? ` AND path[1] < (SELECT path[1] FROM posts p WHERE p.id = ${since})` : '') :
+                (since ? ` AND path[1] > (SELECT path[1] FROM posts p WHERE p.id = ${since})` : '')}
+            ORDER BY id ${desc === 'true' ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit};` : ';'}`;
         
         return request;
     }
