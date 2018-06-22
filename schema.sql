@@ -83,12 +83,13 @@ CREATE INDEX IF NOT EXISTS indexVoteNick ON votes(nickname);
 
 CREATE TABLE usersForums (
   author VARCHAR REFERENCES users(nickname) NOT NULL,
-  forum CITEXT REFERENCES forum(slug) NOT NULL
+  forum CITEXT REFERENCES forum(slug) NOT NULL,
+
+  UNIQUE(forum, author)
 );
 
-
+CREATE UNIQUE INDEX IF NOT EXISTS indexUsersForumsAuthorForum(lower(forum), lower(author));
 CREATE INDEX IF NOT EXISTS indexUsersForumsUser ON usersForums (author);
-CREATE INDEX IF NOT EXISTS indexUsersForumsForum ON usersForums (forum);
 CREATE INDEX IF NOT EXISTS indexUsersForumsUserLow on usersForums (lower(author) COLLATE "ucs_basic");
 
 
