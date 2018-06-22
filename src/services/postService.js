@@ -44,8 +44,9 @@ class PostService extends DataBaseService {
 
         console.log(forumSlug, threadID);
 
+        let added = []
         
-        const added = posts.map(post => {
+        for (let post of posts) {
             console.log("try to add " + post);
             const result = await this.dataBase.oneOrNone(
                 `insert into posts (parent, author, forum, thread, created, message) 
@@ -53,10 +54,12 @@ class PostService extends DataBaseService {
                     '${forumSlug}', ${threadID}, '${created.toISOString()}', '${post.message$}') returning *;`                
             ).catch(reason => console.log(reason));
 
+            [result.id, result.parent] = [+result.id, +result.parent];
+            delete result.path;
             console.log(result);
 
-            return result;
-        });
+            added.push(result);
+        }
 
         console.log(added);
 
@@ -65,7 +68,7 @@ class PostService extends DataBaseService {
             forumSlug
         );
 
-        return [200, added];
+        return [201, added];
     }
 
     selectParents(posts) {
