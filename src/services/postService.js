@@ -61,29 +61,19 @@ class PostService extends DataBaseService {
 
     async createPosts(posts, theadSlugOrId, created) {
 
-        // console.log("Start");
-
-        // console.log(posts);
-
         if (posts.length === 0) {
             return [201, posts];
         }
 
-        // console.log("posts.length != 0");
-
         const [status, thread] = await threadService.getByIdOrSlug(theadSlugOrId);
         if (status === 404) {
-            // console.log("WARN: not fount thread: " + theadSlugOrId);
             return [status, thread];
         }
-
-        // console.log("thread found");
 
         const parents = this.selectParents(posts);
 
         if (parents.length) {
             const idLine = parents.join(', ');
-            console.log(idLine);
             const foundParents = await this.dataBase.manyOrNone(
                 `SELECT id FROM posts WHERE thread = ${thread.id} AND id = ANY(ARRAY[${idLine}]::BIGINT[]);`
             ).catch(reason => console.log(reason));
@@ -95,8 +85,6 @@ class PostService extends DataBaseService {
 
         const forumSlug = thread.forum;
         const threadID = thread.id;
-
-        console.log(forumSlug, threadID);
 
         let added = []
         
@@ -117,12 +105,12 @@ class PostService extends DataBaseService {
             added.push(result);
         }
 
-        console.log(added);
+        // console.log(added);
 
         this.dataBase.query(
             `update forum set posts = posts + ${added.length} where lower('slug') = lower($1);`,
             forumSlug
-        );
+        ).catch(reason => console.log(reason));
 
         return [201, added];
     }

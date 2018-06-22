@@ -4,3 +4,4 @@ package-lock.json
 built
 tests/report.html
 .vscode
+*.dat.gz
