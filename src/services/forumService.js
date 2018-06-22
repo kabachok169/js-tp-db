@@ -45,6 +45,8 @@ class ForumService extends DataBaseService {
         }
 
         forum.user = forum.author;
+        forum.posts = +forum.posts;
+        forum.threads = +forum.threads;
         return [200, forum];
     }
 
@@ -62,8 +64,12 @@ class ForumService extends DataBaseService {
         }
 
         await this.dataBase.oneOrNone(
+            `UPDATE forum SET threads = threads + 1 WHERE id = ${forum.id}`
+        );
+
+        await this.dataBase.oneOrNone(
             `INSERT INTO usersForums (author, forum) 
-             SELECT '${user.nickname}', '${slug}' 
+             SELECT '${user.nickname}', '${forum.slug}' 
              WHERE NOT EXISTS 
              (SELECT forum FROM usersForums
              WHERE LOWER(author) = LOWER('${user.nickname}') AND forum = '${slug}')`
@@ -89,7 +95,7 @@ class ForumService extends DataBaseService {
              ${thread.created ? `, '${thread.created}'` : ''} ,
              '${thread.title}',
              '${user.nickname}',
-             '${slug}'${thread.slug ? `, '${thread.slug}'` : ''})
+             '${forum.slug}'${thread.slug ? `, '${thread.slug}'` : ''})
               RETURNING *;`;
         // console.log(request);
 
@@ -144,7 +150,7 @@ class ForumService extends DataBaseService {
         const users = await this.dataBase.manyOrNone(
             `SELECT nickname, fullname, about, email FROM users u
              JOIN usersForums t ON LOWER(u.nickname) = LOWER(t.author)
-             WHERE LOWER(t.forum) = LOWER('{slug}') 
+             WHERE LOWER(t.forum) = LOWER('${slug}') 
             ${desc === 'true' ?
                 since ? ` AND LOWER(u.nickname) < LOWER('${since}')` : ''
                 :
