@@ -133,9 +133,9 @@ class PostService extends DataBaseService {
 
         if (sort === 'tree') {
             let request = `SELECT * FROM posts where thread = ${thread.id} 
-                        ${desc ? (since ? 'AND path > (SELECT path FROM messages WHERE id = ' + since + ')' : '') 
-                            : (since ? 'AND path < (SELECT path FROM messages WHERE id = ' + since + ')' : '')}
-                        ORDER BY path ${desc ? 'DESC' : 'ASC'}, id ${desc ? 'DESC' : 'ASC'} ${limit ? 'LIMIT ' + limit : ''}`;
+                        ${desc === 'true' ? (since ? `AND path > (SELECT path FROM posts WHERE id = ${since})` : '') 
+                            : (since ? `AND path < (SELECT path FROM posts WHERE id = ${since})` : '')}
+                        ORDER BY path ${desc === 'true' ? 'DESC' : 'ASC'}, id ${desc === 'true'  ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit}` : ''}`;
             
             const result = await this.dataBase.manyOrNone(request);
 
@@ -144,14 +144,40 @@ class PostService extends DataBaseService {
         }
         if (sort === 'flat') {
             let request = `SELECT * FROM posts where thread = ${thread.id} 
-                        ${desc ? (since ? 'AND id > ' + since : '') : (since ? 'AND id < ' + since : '')}
-                        ORDER BY created ${desc ? 'DESC' : 'ASC'}, id ${desc ? 'DESC' : 'ASC'} ${limit ? 'LIMIT ' + limit : ''}`;
+                        ${desc === 'true' ? (since ? `AND id > ${since}` : '') : (since ? `AND id > ${since}` : '')}
+                        ORDER BY created ${desc === 'true' ? 'DESC' : 'ASC'}, id ${desc === 'true' ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit}` : ''}`;
             
             const result = await this.dataBase.manyOrNone(request);
 
             result.forEach(post => {post.id = +post.id; post.parent = +post.parent; delete post.path; console.log(post)});
             return [200, result];
         }
+        if (sort === 'parent_tree') {
+            const parents = await this.dataBase.manyOrNone(this.getParents(thread.id, since, desc, limit)).catch(reason => console.log(reason));
+            console.log(1);
+            let posts = [];
+            for (let post in parents) {
+                let request = `SELECT * FROM posts where thread = ${thread.id} AND path[1] = ${post.id}
+                        ${desc === 'true' ? (since ? `AND path[1] > (SELECT path[1] FROM posts WHERE id = ${since})` : '')
+                    : (since ? `AND path[1] < (SELECT path[1] FROM posts WHERE id = ${since})` : '')}
+                        ORDER BY path ${desc === 'true' ? 'DESC' : 'ASC'}, id ${desc === 'true'  ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit}` : ''}`;
+                console.log(request);
+                const result = await this.dataBase.manyOrNone(request);
+                posts = posts.concat(result);
+            }
+            posts.forEach(post => {post.id = +post.id; post.parent = +post.parent; delete post.path; console.log(post)});
+            return [200, posts];
+        }
+    }
+
+    async getParents(threadId, since, desc, limit) {
+        let request =
+            `SELECT id FROM posts WHERE thread = ${threadId} AND parent = 0${desc === 'true' ? 
+                (since ? ` AND path[1] < (SELECT path[1] FROM posts WHERE id = ${since})` : '') :
+                (since ? ` AND path[1] > (SELECT path[1] FROM posts WHERE id = ${since})` : '')}
+            ORDER BY id ${desc === 'true' ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit};` : ''}`;
+        console.log('Parents: ', request);
+        return request;
     }
 }
 
