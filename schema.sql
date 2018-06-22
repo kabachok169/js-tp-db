@@ -88,7 +88,7 @@ CREATE TABLE usersForums (
   UNIQUE(forum, author)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS indexUsersForumsAuthorForum(lower(forum), lower(author));
+CREATE UNIQUE INDEX IF NOT EXISTS indexUsersForumsAuthorForum ON usersForums(lower(forum), lower(author));
 CREATE INDEX IF NOT EXISTS indexUsersForumsUser ON usersForums (author);
 CREATE INDEX IF NOT EXISTS indexUsersForumsUserLow on usersForums (lower(author) COLLATE "ucs_basic");
 
