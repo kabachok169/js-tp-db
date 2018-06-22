@@ -8,7 +8,7 @@ class ThreadService extends DataBaseService {
         this.queries = {
             find_by_id: "SELECT * FROM threads WHERE id = $1;",
             find_by_slug: "SELECT * FROM threads WHERE lower(slug) = lower($1);",
-        }
+        };
 
         this.isID = val => +val;        
     }

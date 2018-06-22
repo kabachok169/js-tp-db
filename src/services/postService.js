@@ -59,13 +59,13 @@ class PostService extends DataBaseService {
         return [200, newPost];
     }
 
-    async createPosts(posts, theadSlugOrId, created) {
+    async createPosts(posts, threadSlugOrId, created) {
 
         if (posts.length === 0) {
             return [201, posts];
         }
 
-        const [status, thread] = await threadService.getByIdOrSlug(theadSlugOrId);
+        const [status, thread] = await threadService.getByIdOrSlug(threadSlugOrId);
         if (status === 404) {
             return [status, thread];
         }
@@ -86,7 +86,7 @@ class PostService extends DataBaseService {
         const forumSlug = thread.forum;
         const threadID = thread.id;
 
-        let added = []
+        let added = [];
         
         for (let post of posts) {
             // console.log("try to add " + post);
@@ -105,11 +105,10 @@ class PostService extends DataBaseService {
             added.push(result);
         }
 
-        // console.log(added);
+        console.log('LEN: ', added.length);
 
-        this.dataBase.query(
-            `update forum set posts = posts + ${added.length} where lower('slug') = lower($1);`,
-            forumSlug
+        await this.dataBase.oneOrNone(
+            `UPDATE forum SET posts = posts + ${added.length} WHERE LOWER(slug) = LOWER('${forumSlug}');`
         ).catch(reason => console.log(reason));
 
         return [201, added];
@@ -133,8 +132,8 @@ class PostService extends DataBaseService {
 
         if (sort === 'tree') {
             let request = `SELECT * FROM posts where thread = ${thread.id} 
-                        ${desc === 'true' ? (since ? `AND path > (SELECT path FROM posts WHERE id = ${since})` : '') 
-                            : (since ? `AND path < (SELECT path FROM posts WHERE id = ${since})` : '')}
+                        ${desc === 'true' ? (since ? `AND path < (SELECT path FROM posts WHERE id = ${since})` : '') 
+                            : (since ? `AND path > (SELECT path FROM posts WHERE id = ${since})` : '')}
                         ORDER BY path ${desc === 'true' ? 'DESC' : 'ASC'}, id ${desc === 'true'  ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit}` : ''}`;
             
             const result = await this.dataBase.manyOrNone(request);
@@ -144,7 +143,7 @@ class PostService extends DataBaseService {
         }
         if (sort === 'flat') {
             let request = `SELECT * FROM posts where thread = ${thread.id} 
-                        ${desc === 'true' ? (since ? `AND id > ${since}` : '') : (since ? `AND id > ${since}` : '')}
+                        ${desc === 'true' ? (since ? `AND id < ${since}` : '') : (since ? `AND id > ${since}` : '')}
                         ORDER BY created ${desc === 'true' ? 'DESC' : 'ASC'}, id ${desc === 'true' ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit}` : ''}`;
             
             const result = await this.dataBase.manyOrNone(request);
@@ -157,16 +156,13 @@ class PostService extends DataBaseService {
                 this.getParents(thread.id, since, desc, limit)
             ).catch(reason => console.log(reason));
 
-            console.log(1);
-
             let posts = [];
-            for (let parentID in parents) {
-                let request = `SELECT * FROM posts where thread = ${thread.id} AND path[1] = ${parentID}
-                        ${desc === 'true' ? (since ? `AND path[1] > (SELECT path[1] FROM posts WHERE id = ${since})` : '')
-                    : (since ? `AND path[1] < (SELECT path[1] FROM posts WHERE id = ${since})` : '')}
-                        ORDER BY path ${desc === 'true' ? 'DESC' : 'ASC'}, id ${desc === 'true'  ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit}` : ''}`;
+            for (let parentID of parents) {
+                let request = `SELECT * FROM posts where thread = ${thread.id} AND path[1] = ${parentID.id}
+                        ${desc === 'true' ? (since ? `AND path[1] < (SELECT path[1] FROM posts WHERE id = ${since})` : '')
+                    : (since ? ` AND path[1] > (SELECT path[1] FROM posts WHERE id = ${since})` : '')}
+                        ORDER BY path, id`;
                 
-                console.log(request);
                 const result = await this.dataBase.manyOrNone(request);
                 posts = posts.concat(result);
             }
@@ -182,8 +178,7 @@ class PostService extends DataBaseService {
                 (since ? ` AND path[1] > (SELECT path[1] FROM posts WHERE id = ${since})` : '')}
             ORDER BY id ${desc === 'true' ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit};` : ''}`;
         
-        console.log('Parents: ', request);
-        
+
         return request;
     }
 }

@@ -45,6 +45,8 @@ class ForumService extends DataBaseService {
         }
 
         forum.user = forum.author;
+        forum.posts = +forum.posts;
+        forum.threads = +forum.threads;
         return [200, forum];
     }
 
@@ -60,6 +62,10 @@ class ForumService extends DataBaseService {
         if (!forum || !user) {
             return [404, {message: 'No forum found'}];
         }
+
+        await this.dataBase.oneOrNone(
+            `UPDATE forum SET threads = threads + 1 WHERE id = ${forum.id}`
+        );
 
         await this.dataBase.oneOrNone(
             `INSERT INTO usersForums (author, forum) 
@@ -144,7 +150,7 @@ class ForumService extends DataBaseService {
         const users = await this.dataBase.manyOrNone(
             `SELECT nickname, fullname, about, email FROM users u
              JOIN usersForums t ON LOWER(u.nickname) = LOWER(t.author)
-             WHERE LOWER(t.forum) = LOWER('{slug}') 
+             WHERE LOWER(t.forum) = LOWER('${slug}') 
             ${desc === 'true' ?
                 since ? ` AND LOWER(u.nickname) < LOWER('${since}')` : ''
                 :

@@ -34,7 +34,7 @@ class PostController {
         const theadSlugOrId = ctx.params['slug_or_id'];
         const limit = ctx.query['limit'];
         const since = ctx.query['since'];
-        const sort = ctx.query['sort'];
+        const sort = ctx.query['sort'] || 'flat';
         const desc = ctx.query['desc'];
 
         const [status, result] = await postService.getPosts(theadSlugOrId, limit, since, sort, desc);
