@@ -31,7 +31,7 @@ class PostService extends DataBaseService {
 
         if (parents.length) {
             const idLine = parents.join(', ');
-            const foundParents = this.dataBase.manyOrNone(
+            const foundParents = await this.dataBase.manyOrNone(
                 `SELECT id FROM posts WHERE thread = ${thread.id}} AND id = ANY(ARRAY[${idLine}]::BIGINT[]);`);
             
             if (foundParents.length < parents.length) {
@@ -47,15 +47,14 @@ class PostService extends DataBaseService {
         
         const added = posts.map(post => {
             console.log("try to add " + post);
-            const result = this.dataBase.oneOrNone(
+            const result = await this.dataBase.oneOrNone(
                 `insert into posts (parent, author, forum, thread, created, message) 
                     values (${ post.parent ? post.parent : 0} , '${post.author}', 
-                    '${forumSlug}', ${threadID}, '${created.toISOString()}', '${post.message$}') returning *;`,
-                
+                    '${forumSlug}', ${threadID}, '${created.toISOString()}', '${post.message$}') returning *;`                
             ).catch(reason => console.log(reason));
 
             console.log(result);
-            
+
             return result;
         });
 
