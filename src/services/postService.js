@@ -214,15 +214,16 @@ class PostService extends DataBaseService {
                     : (since ? ` AND path[1] > (SELECT path[1] FROM posts WHERE id = ${since})` : '')}
                         ORDER BY path, id`;
                 
-                const result = await this.dataBase.manyOrNone(request).catch(reason => console.log(reason));
+                const result = await this.dataBase.manyOrNone(request).catch(reason => console.log(request, reason));
                 posts = posts.concat(result);
             }
-            
+
             posts.forEach(post => {
                 post.id = +post.id; 
                 post.parent = +post.parent; 
                 // delete post.path;
             });
+
             return [200, posts];
         }
     }
