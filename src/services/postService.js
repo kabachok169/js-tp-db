@@ -58,6 +58,8 @@ class PostService extends DataBaseService {
             return result;
         });
 
+        console.log(added);
+
         this.dataBase.query(
             `update forum set posts = posts + ${added.length} where lower('slug') = lower($1);`,
             forumSlug
@@ -69,14 +71,10 @@ class PostService extends DataBaseService {
     selectParents(posts) {
 
         let candidates = new Set();
-        let idSet = new Set();
 
-        posts.forEach(post => candidates.add(post.parent));
-        posts.forEach(post => idSet.add(post.id));
+        posts.forEach(post => post.parent && candidates.add(post.parent));
 
-        const parents = candidates.array.filter(id => !idSet.has(id));
-
-        return parents;
+        return [...candidates];
     }
 }
 
