@@ -91,6 +91,8 @@ class ThreadService extends DataBaseService {
         const thread = await this.dataBase.oneOrNone(query, slugOrId);
         thread.id = +thread.id;
 
+        console.log('got thread');
+
         if (!thread) {
             return [404, {message: 'No thread found'}];
         }
@@ -110,6 +112,8 @@ class ThreadService extends DataBaseService {
         }
 
         const sum = oldVote.voice + vote.voice;
+
+        console.log('check votes...');
 
         if (sum === 2 || sum === -2) {
             return [200, thread];
@@ -132,10 +136,11 @@ class ThreadService extends DataBaseService {
 
     async updateVoteThread(threadId, vote) {
         const newThread = await this.dataBase.one(
-            `UPDATE thread SET votes=votes+${vote} WHERE thread.id=${threadId} RETURNING *;`
+            `UPDATE threads SET votes=votes+${vote} WHERE threads.id=${threadId} RETURNING *;`
         );
 
         newThread.id = +newThread.id;
+        newThread.votes = +newThread.votes;
         return newThread;
     }
 }

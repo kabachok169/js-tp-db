@@ -9,7 +9,7 @@ class PostService extends DataBaseService {
 
     async get(id, related) {
         const result = {};
-        const post = await this.dataBase.oneOrNone(`SELECT * FROM messages WHERE id = ${id}`);
+        const post = await this.dataBase.oneOrNone(`SELECT * FROM posts WHERE id = ${id}`);
         if (!post) {
             return [404, {message: 'No thread found'}];
         }
@@ -39,7 +39,7 @@ class PostService extends DataBaseService {
     }
 
     async update(id, postData) {
-        const post = await this.dataBase.oneOrNone(`SELECT * FROM messages WHERE id = ${id}`);
+        const post = await this.dataBase.oneOrNone(`SELECT * FROM posts WHERE id = ${id}`);
 
         if (!post) {
             return [404, {message: 'No thread found'}];
@@ -51,7 +51,7 @@ class PostService extends DataBaseService {
         }
 
         const newPost = await this.dataBase.one(
-            `UPDATE messages SET isEdited=TRUE, message='${postData.message}' WHERE id = ${id} RETURNING *;`
+            `UPDATE posts SET isEdited=TRUE, message='${postData.message}' WHERE id = ${id} RETURNING *;`
         );
 
         newPost.isEdited = newPost.isedited;
@@ -142,7 +142,7 @@ class PostService extends DataBaseService {
         }
 
         if (sort === 'tree') {
-            let request = `SELECT * FROM messages where thread = ${thread.id} 
+            let request = `SELECT * FROM posts where thread = ${thread.id} 
                         ${desc ? (since ? 'AND path > (SELECT path FROM messages WHERE id = ' + since + ')' : '') 
                             : (since ? 'AND path < (SELECT path FROM messages WHERE id = ' + since + ')' : '')}
                         OREDER BY path ${desc ? 'DESC' : 'ASC'}, id ${desc ? 'DESC' : 'ASC'} ${limit ? 'LIMIT ' + limit : ''}`;
@@ -151,7 +151,7 @@ class PostService extends DataBaseService {
             return [200, result];
         }
         if (sort === 'flat') {
-            let request = `SELECT * FROM messages where thread = ${thread.id} 
+            let request = `SELECT * FROM posts where thread = ${thread.id} 
                         ${desc ? (since ? 'AND id > ' + since : '') : (since ? 'AND id < ' + since : '')}
                         OREDER BY created ${desc ? 'DESC' : 'ASC'}, id ${desc ? 'DESC' : 'ASC'} ${limit ? 'LIMIT ' + limit : ''}`;
             
