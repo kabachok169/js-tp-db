@@ -61,26 +61,6 @@ class ThreadService extends DataBaseService {
         return [200, updatedThread];
     }
 
-    async createPosts(slugOrId, posts, date) {
-        let query = this.queries.find_by_slug;
-        if (this.isID(slugOrId)) {
-            query = this.queries.find_by_id;
-        }
-
-        const thread = await this.dataBase.oneOrNone(query, slugOrId);
-
-        if (!thread) {
-            return [404, {message: 'No thread found'}];
-        }
-
-        posts.forEach((item) => {
-            if (item.parent === undefined) {
-                item.parent = 0;
-                item.path = [];
-            }
-            item.created = date;
-        })
-    }
 
     async vote(slugOrId, vote) {
         let query = this.queries.find_by_slug;
@@ -88,24 +68,33 @@ class ThreadService extends DataBaseService {
             query = this.queries.find_by_id;
         }
 
-        const thread = await this.dataBase.oneOrNone(query, slugOrId);
-        thread.id = +thread.id;
+        const author = await this.dataBase.oneOrNone(
+            "SELECT nickname FROM users WHERE LOWER(nickname) = LOWER($1)", vote.nickname
+        ).catch(reason => console.log(reason));
+        // console.log('got thread');
 
+        if (!author) {
+            return [404, {message: 'No author found'}];
+        }
+
+        const thread = await this.dataBase.oneOrNone(query, slugOrId).catch(reason => console.log(reason));
         // console.log('got thread');
 
         if (!thread) {
             return [404, {message: 'No thread found'}];
         }
+               
+        thread.id = +thread.id;
 
         const oldVote = await this.dataBase.oneOrNone(
             `SELECT * FROM votes
              WHERE votes.thread=${thread.id} AND votes.nickname='${vote.nickname}' LIMIT 1;`
-        );
+        ).catch(reason => console.log(reason));
 
         if (!oldVote) {
             await this.dataBase.none(
                 `INSERT INTO votes (voice, nickname, thread) VALUES (${vote.voice}, '${vote.nickname}', ${thread.id})`
-            );
+            ).catch(reason => console.log(reason));
 
             const newThread = await this.updateVoteThread(thread.id, vote.voice);
             return [200, newThread];
@@ -122,14 +111,14 @@ class ThreadService extends DataBaseService {
             await this.dataBase.none(
                 `UPDATE votes SET voice=${vote.voice} 
                  WHERE votes.thread=${thread.id} AND votes.nickname='${vote.nickname}';`
-            );
+            ).catch(reason => console.log(reason));
             const newThread = await this.updateVoteThread(thread.id, 2 * vote.voice);
             return [200, newThread];
         } else {
             await this.dataBase.none(
                 `UPDATE votes SET voice=${vote.voice} 
                  WHERE votes.thread=${thread.id} AND votes.nickname='${vote.nickname}';`
-            );
+            ).catch(reason => console.log(reason));
             const newThread = await this.updateVoteThread(thread.id, -vote.voice);
             return [200, newThread];
         }
@@ -138,7 +127,7 @@ class ThreadService extends DataBaseService {
     async updateVoteThread(threadId, vote) {
         const newThread = await this.dataBase.one(
             `UPDATE threads SET votes=votes+${vote} WHERE threads.id=${threadId} RETURNING *;`
-        );
+        ).catch(reason => console.log(reason));
 
         newThread.id = +newThread.id;
         newThread.votes = +newThread.votes;
