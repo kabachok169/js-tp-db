@@ -13,6 +13,20 @@ class PostController {
         ctx.body = result;
         ctx.status = status;
     }
+
+    async getPosts(ctx) {
+        const theadSlugOrId = ctx.params['slug_or_id'];
+        const limit = ctx.query['limit'];
+        const since = ctx.query['since'];
+        const sort = ctx.query['sort'];
+        const desc = ctx.query['desc'];
+
+        const [status, result] = await threadService.getPosts(theadSlugOrId, limit, since, sort);
+
+        ctx.body = result;
+        ctx.status = status;
+
+    }
 }
 
 const postController = new PostController();

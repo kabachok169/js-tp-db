@@ -61,6 +61,18 @@ class ThreadService extends DataBaseService {
         return [200, updatedThread];
     }
 
+    async getPosts(slugOrId, limit, since, sort) {
+        let [status, thread] = await this.getByIdOrSlug(slugOrId)
+
+        if (status === 404) {
+            return [status, thread];
+        }
+
+        if (sort === 'flat') {
+            let request = `SELECT * FROM messages where thread = ${thread.id} ${desc ? }`;
+
+        }
+    }
 }
 
 
