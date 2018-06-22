@@ -51,7 +51,7 @@ class PostService extends DataBaseService {
             const result = await this.dataBase.oneOrNone(
                 `insert into posts (parent, author, forum, thread, created, message) 
                     values (${ post.parent ? post.parent : 0} , '${post.author}', 
-                    '${forumSlug}', ${threadID}, '${created.toISOString()}', '${post.message$}') returning *;`                
+                    '${forumSlug}', ${threadID}, '${created.toISOString()}', '${post.message}') returning *;`                
             ).catch(reason => console.log(reason));
 
             [result.id, result.parent] = [+result.id, +result.parent];
@@ -61,7 +61,7 @@ class PostService extends DataBaseService {
             added.push(result);
         }
 
-        console.log(added);
+        // console.log(added);
 
         this.dataBase.query(
             `update forum set posts = posts + ${added.length} where lower('slug') = lower($1);`,
