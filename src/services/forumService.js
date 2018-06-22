@@ -68,11 +68,7 @@ class ForumService extends DataBaseService {
         );
 
         await this.dataBase.oneOrNone(
-            `INSERT INTO usersForums (author, forum) 
-             SELECT '${user.nickname}', '${forum.slug}' 
-             WHERE NOT EXISTS 
-             (SELECT forum FROM usersForums
-             WHERE LOWER(author) = LOWER('${user.nickname}') AND forum = '${slug}')`
+            `INSERT INTO usersForums (author, forum) values ('${user.nickname}', '${forum.slug}') ON CONFLICT DO NOTHING;`
         );
 
         // console.log(2);

@@ -137,11 +137,7 @@ class PostService extends DataBaseService {
             delete post.path;
             added.push(post);
             await this.dataBase.oneOrNone(
-                `INSERT INTO usersForums (author, forum) 
-             SELECT '${post.author}', '${forumSlug}' 
-             WHERE NOT EXISTS 
-             (SELECT forum FROM usersForums
-             WHERE LOWER(author) = LOWER('${post.author}') AND forum = '${forumSlug}')`
+                `INSERT INTO usersForums (author, forum) values ('${post.author}', '${forumSlug}') ON CONFLICT DO NOTHING;`
             );
         }
 
