@@ -9,23 +9,23 @@ class PostService extends DataBaseService {
 
     async createPosts(posts, theadSlugOrId, created) {
 
-        console.log("Start");
+        // console.log("Start");
 
-        console.log(posts);
+        // console.log(posts);
 
         if (posts.length === 0) {
             return [201, posts];
         }
 
-        console.log("posts.length != 0");
+        // console.log("posts.length != 0");
 
         const [status, thread] = await threadService.getByIdOrSlug(theadSlugOrId);
         if (status === 404) {
-            console.log("WARN: not fount thread: " + theadSlugOrId);
+            // console.log("WARN: not fount thread: " + theadSlugOrId);
             return [status, thread];
         }
 
-        console.log("thread found");
+        // console.log("thread found");
 
         const parents = this.selectParents(posts);
 
@@ -42,12 +42,12 @@ class PostService extends DataBaseService {
         const forumSlug = thread.forum;
         const threadID = thread.id;
 
-        console.log(forumSlug, threadID);
+        // console.log(forumSlug, threadID);
 
         let added = []
         
         for (let post of posts) {
-            console.log("try to add " + post);
+            // console.log("try to add " + post);
             const result = await this.dataBase.oneOrNone(
                 `insert into posts (parent, author, forum, thread, created, message) 
                     values (${ post.parent ? post.parent : 0} , '${post.author}', 
@@ -56,7 +56,7 @@ class PostService extends DataBaseService {
 
             [result.id, result.parent] = [+result.id, +result.parent];
             delete result.path;
-            console.log(result);
+            // console.log(result);
 
             added.push(result);
         }
