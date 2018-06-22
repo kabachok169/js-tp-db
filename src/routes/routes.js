@@ -29,5 +29,8 @@ router.post('/api/post/:id/details', postController.update);
 router.post('/api/service/clear', serviceController.clear);
 router.get('/api/service/status', serviceController.getInfo);
 
+router.get('/api/thread/:slug_or_id/posts', postController.getPosts);
+
+router.post('/api/thread/:slug_or_id/create', postController.create);
 
 export default router;

@@ -23,14 +23,6 @@ export default class DataBaseService {
     return this._pgp;
   }
 
-  get task() {
-    return this.dataBase.task;
-  }
-
-  get transaction() {
-    return this.dataBase.tx;
-  }
-
   get dataBase() {
     return this._dataBase;
   }

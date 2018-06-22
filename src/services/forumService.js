@@ -63,7 +63,7 @@ class ForumService extends DataBaseService {
 
         await this.dataBase.oneOrNone(
             `INSERT INTO usersForums (author, forum) 
-             SELECT '${user.nickname}', '${slug}' 
+             SELECT '${user.nickname}', '${forum.slug}' 
              WHERE NOT EXISTS 
              (SELECT forum FROM usersForums
              WHERE LOWER(author) = LOWER('${user.nickname}') AND forum = '${slug}')`
@@ -89,7 +89,7 @@ class ForumService extends DataBaseService {
              ${thread.created ? `, '${thread.created}'` : ''} ,
              '${thread.title}',
              '${user.nickname}',
-             '${slug}'${thread.slug ? `, '${thread.slug}'` : ''})
+             '${forum.slug}'${thread.slug ? `, '${thread.slug}'` : ''})
               RETURNING *;`;
         // console.log(request);
 
