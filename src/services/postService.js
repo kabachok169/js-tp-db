@@ -70,8 +70,20 @@ class PostService extends DataBaseService {
             return [status, thread];
         }
 
-        const parents = this.selectParents(posts);
+        const authors = this.selectAuthors(posts);
+        if (authors.length) {
+            const nicksLine = authors.map(nick => `LOWER('${nick}')`).join(', ');
+            // console.log(nicksLine);
+            const query = `SELECT lower(nickname) FROM users WHERE lower(nickname) = ANY(ARRAY[${nicksLine}]);`;
+            // console.log(query);
+            const foundAuthors = await this.dataBase.manyOrNone(query).catch(reason => console.log(reason));
+            
+            if (foundAuthors.length < authors.length) {
+                return [409, {message: 'Some users are wrong'}];
+            }
+        }
 
+        const parents = this.selectParents(posts);
         if (parents.length) {
             const idLine = parents.join(', ');
             const foundParents = await this.dataBase.manyOrNone(
@@ -87,28 +99,44 @@ class PostService extends DataBaseService {
         const threadID = thread.id;
 
         let added = [];
-        
-        for (let post of posts) {
-            // console.log("try to add " + post);
-            // const author = await this.dataBase.oneOrNone(`SELECT nickname FROM users WHERE LOWER('nickname') = LOWER('${post.author}')`);
-            // console.log(author);
-            const result = await this.dataBase.oneOrNone(
-                `insert into posts (parent, author, forum, thread, created, message) 
-                    values (${post.parent ? post.parent : 0} , '${post.author}',
-                    '${forumSlug}', ${threadID}, '${created.toISOString()}', '${post.message}') returning *;`                
-            ).catch(reason => console.log(reason));
 
-            [result.id, result.parent] = [+result.id, +result.parent];
-            delete result.path;
-            // console.log(result);
+        const values = posts.map(
+            p => `(${p.parent ? p.parent : 0} , '${p.author}','${forumSlug}', ${threadID},'${created.toISOString()}', '${p.message}')`
+        ).join(", ")
 
-            added.push(result);
-        }
+        // cconsole.log(values);
+
+        // for (let post of posts) {
+        //     const result = await this.dataBase.oneOrNone(
+        //         `insert into posts (parent, author, forum, thread, created, message) 
+        //             values (${post.parent ? post.parent : 0} , '${post.author}','${forumSlug}', ${threadID}, '${created.toISOString()}', '${post.message}') returning *;`                
+        //     ).catch(reason => console.log(reason));
+
+        //     [result.id, result.parent] = [+result.id, +result.parent];
+        //     delete result.path;
+        //     // console.log(result);
+
+        //     added.push(result);
+        // }
 
         console.log('LEN: ', added.length);
 
-        await this.dataBase.oneOrNone(
-            `UPDATE forum SET posts = posts + ${added.length} WHERE LOWER(slug) = LOWER('${forumSlug}');`
+
+        const result = await this.dataBase.manyOrNone(
+                    `insert into posts (parent, author, forum, thread, created, message) values ${values} returning *;`                
+                ).catch(reason => console.log(reason));
+
+        result.forEach(post => {
+            [post.id, post.parent] = [+post.id, +post.parent];
+            delete post.path;
+            added.push(post);
+        });
+
+        // console.log(added)        
+
+        this.dataBase.query(
+            `update forum set posts = posts + ${added.length} where lower(slug) = lower($1);`,
+            forumSlug
         ).catch(reason => console.log(reason));
 
         return [201, added];
@@ -120,6 +148,12 @@ class PostService extends DataBaseService {
 
         posts.forEach(post => post.parent && candidates.add(post.parent));
 
+        return [...candidates];
+    }
+
+    selectAuthors(posts) {
+        let candidates = new Set();
+        posts.forEach(post => candidates.add(post.author));
         return [...candidates];
     }
 

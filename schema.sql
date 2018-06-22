@@ -73,8 +73,9 @@ CREATE TABLE votes
 (
   voice INT CHECK (voice in (1, -1)),
   nickname VARCHAR REFERENCES users (nickname),
-  thread BIGINT REFERENCES threads (id)
-  -- CONSTRAINT unique_vote UNIQUE (userid, threadid)
+  thread BIGINT REFERENCES threads (id),
+  
+  UNIQUE (nickname, thread)
 );
 
 CREATE INDEX IF NOT EXISTS indexVoteThread ON votes(thread);
