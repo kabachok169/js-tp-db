@@ -1,6 +1,14 @@
 import postService from '../services/postService';
+import forumService from "../services/forumService";
 
 class PostController {
+
+    async update(ctx) {
+        const id = ctx.params['id'];
+        const postData = ctx.request.body;
+
+        const [status, result] = await postService.update(id, postData);
+    }
 
     async create(ctx) {
         const posts = ctx.request.body;
@@ -9,6 +17,15 @@ class PostController {
         const created = new Date();
 
         const [status, result] = await postService.createPosts(posts, theadSlugOrId, created);
+        ctx.body = result;
+        ctx.status = status;
+    }
+
+    async get(ctx) {
+        const id = ctx.params['id'];
+        const related = ctx.query['related'];
+
+        const [status, result] = await postService.get(id, related);
 
         ctx.body = result;
         ctx.status = status;
@@ -25,7 +42,6 @@ class PostController {
 
         ctx.body = result;
         ctx.status = status;
-
     }
 }
 

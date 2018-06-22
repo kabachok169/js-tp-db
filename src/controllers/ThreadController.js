@@ -32,6 +32,16 @@ class ThreadController {
         ctx.status = status;
         ctx.body = posts;
     }
+
+    async vote(ctx) {
+        const slugOrId = ctx.params['slug_or_id'];
+        const vote = ctx.request.body;
+
+        const [status, updatedThread] = await threadService.vote(slugOrId, vote);
+
+        ctx.status = status;
+        ctx.body = updatedThread;
+    }
 }
 
 const threadController = new ThreadController();
