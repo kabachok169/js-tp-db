@@ -14,21 +14,25 @@ class PostService extends DataBaseService {
             return [404, {message: 'No thread found'}];
         }
         post.isEdited = post.isedited;
+        post.id = +post.id;
+        post.parent = +post.parent;
         result.post = post;
         if (!related) {
             return [200, result];
         }
-
-        if (related.user) {
+        console.log(related);
+        if (related.indexOf('user') > -1) {
             const user = await this.dataBase.one(this.checkUser(post.author));
-            result.user = user;
+            result.author = user;
         }
-        if (related.forum) {
+        if (related.indexOf('forum') > -1) {
             const forum = await this.dataBase.one(this.checkForum(post.forum));
             forum.user = forum.author;
+            forum.posts = +forum.posts;
+            forum.threads = +forum.threads;
             result.forum = forum;
         }
-        if (related.thread) {
+        if (related.indexOf('thread') > -1) {
             const thread = await this.dataBase.one(`SELECT * FROM threads WHERE id = ${post.thread};`);
             thread.id = +thread.id;
             thread.votes = +thread.votes;
@@ -47,6 +51,8 @@ class PostService extends DataBaseService {
 
         if (!postData.message || postData.message === post.message) {
             post.isEdited = post.isedited;
+            post.id = +post.id;
+            post.parent = +post.parent;
             return [200, post];
         }
 
@@ -55,19 +61,18 @@ class PostService extends DataBaseService {
         );
 
         newPost.isEdited = newPost.isedited;
+        newPost.id = +newPost.id;
+        newPost.parent = +newPost.parent;
 
         return [200, newPost];
     }
 
     async createPosts(posts, threadSlugOrId, created) {
 
-        if (posts.length === 0) {
-            return [201, posts];
-        }
-
         const [status, thread] = await threadService.getByIdOrSlug(threadSlugOrId);
+        console.log(status);
         if (status === 404) {
-            return [status, thread];
+            return [status, {message: 'No thread'}];
         }
 
         const authors = this.selectAuthors(posts);
@@ -79,8 +84,12 @@ class PostService extends DataBaseService {
             const foundAuthors = await this.dataBase.manyOrNone(query).catch(reason => console.log(reason));
             
             if (foundAuthors.length < authors.length) {
-                return [409, {message: 'Some users are wrong'}];
+                return [404, {message: 'Some users are wrong'}];
             }
+        }
+
+        if (posts.length === 0) {
+            return [201, posts];
         }
 
         const parents = this.selectParents(posts);
@@ -102,7 +111,7 @@ class PostService extends DataBaseService {
 
         const values = posts.map(
             p => `(${p.parent ? p.parent : 0} , '${p.author}','${forumSlug}', ${threadID},'${created.toISOString()}', '${p.message}')`
-        ).join(", ")
+        ).join(", ");
 
         // cconsole.log(values);
 
@@ -119,18 +128,22 @@ class PostService extends DataBaseService {
         //     added.push(result);
         // }
 
-        console.log('LEN: ', added.length);
-
-
         const result = await this.dataBase.manyOrNone(
                     `insert into posts (parent, author, forum, thread, created, message) values ${values} returning *;`                
                 ).catch(reason => console.log(reason));
 
-        result.forEach(post => {
+        for (let post of result) {
             [post.id, post.parent] = [+post.id, +post.parent];
             delete post.path;
             added.push(post);
-        });
+            await this.dataBase.oneOrNone(
+                `INSERT INTO usersForums (author, forum) 
+             SELECT '${post.author}', '${forumSlug}' 
+             WHERE NOT EXISTS 
+             (SELECT forum FROM usersForums
+             WHERE LOWER(author) = LOWER('${post.author}') AND forum = '${forumSlug}')`
+            );
+        }
 
         // console.log(added)        
 

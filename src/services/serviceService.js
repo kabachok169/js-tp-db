@@ -12,11 +12,20 @@ class ServiceService extends DataBaseService {
 
     async get() {
         const result = {};
-        result.user = await this.dataBase.one('SELECT COUNT(*) FROM users;');
-        result.forum = await this.dataBase.one('SELECT COUNT(*) FROM forum;');
-        result.thread = await this.dataBase.one('SELECT COUNT(*) FROM threads;');
-        result.post = await this.dataBase.one('SELECT COUNT(*) FROM posts;');
 
+        const user = await this.dataBase.one('SELECT COUNT(*) FROM users;');
+        result.user = +user.count;
+
+        const forum = await this.dataBase.one('SELECT COUNT(*) FROM forum;');
+        result.forum = +forum.count;
+
+        const thread = await this.dataBase.one('SELECT COUNT(*) FROM threads;');
+        result.thread = +thread.count;
+
+        const post = await this.dataBase.one('SELECT COUNT(*) FROM posts;');
+        result.post = +post.count;
+
+        console.log(result);
         return result;
     }
 }

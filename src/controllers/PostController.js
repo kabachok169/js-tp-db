@@ -7,6 +7,8 @@ class PostController {
         const postData = ctx.request.body;
 
         const [status, result] = await postService.update(id, postData);
+        ctx.body = result;
+        ctx.status = status;
     }
 
     async create(ctx) {
@@ -22,7 +24,8 @@ class PostController {
 
     async get(ctx) {
         const id = ctx.params['id'];
-        const related = ctx.query['related'];
+        let related = ctx.query['related'];
+        related ? related = related.split(',') : '';
 
         const [status, result] = await postService.get(id, related);
 
