@@ -46,6 +46,7 @@ CREATE TABLE threads
 CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueSlugThread ON threads(slug);
 
 CREATE TABLE posts (
+
   id SERIAL NOT NULL PRIMARY KEY,
 
   author VARCHAR NOT NULL REFERENCES users(nickname),
@@ -88,3 +89,18 @@ CREATE TABLE usersForums (
 CREATE INDEX IF NOT EXISTS indexUsersForumsUser ON usersForums (author);
 CREATE INDEX IF NOT EXISTS indexUsersForumsForum ON usersForums (forum);
 CREATE INDEX IF NOT EXISTS indexUsersForumsUserLow on usersForums (lower(author) COLLATE "ucs_basic");
+
+
+CREATE FUNCTION tree_path() RETURNS trigger AS $tree_path$
+DECLARE
+  pid BIGINT;
+BEGIN
+  pid := new.parent;
+  new.tree_path := array_append((SELECT tree_path from posts WHERE id = pid), new.id);
+  RETURN new;
+END;
+$tree_path$ LANGUAGE plpgsql;
+
+
+CREATE TRIGGER tree_path BEFORE INSERT OR UPDATE ON posts
+FOR EACH ROW EXECUTE PROCEDURE tree_path();

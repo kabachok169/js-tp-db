@@ -2,6 +2,7 @@ import Router from 'koa-router';
 import userController from '../controllers/UserController';
 import forumController from '../controllers/ForumController';
 import threadController from '../controllers/ThreadController';
+import postController from '../controllers/PostController';
 
 const router = new Router();
 
@@ -21,5 +22,6 @@ router.get('/api/forum/:slug/users', forumController.getUsers);
 router.get('/api/thread/:slug_or_id/details', threadController.threadDetails);
 router.post('/api/thread/:slug_or_id/details', threadController.threadUpdate);
 
+router.post('/api/thread/:slug_or_id/create', postController.create);
 
 export default router;
