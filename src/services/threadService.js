@@ -61,28 +61,6 @@ class ThreadService extends DataBaseService {
         return [200, updatedThread];
     }
 
-    async createPosts(slugOrId, posts, date) {
-        let query = this.queries.find_by_slug;
-        if (this.isID(slugOrId)) {
-            query = this.queries.find_by_id;
-        }
-
-        const thread = await this.dataBase.oneOrNone(query, slugOrId);
-
-        if (!thread) {
-            return [404, {message: 'No thread found'}];
-        }
-
-        posts.forEach((item) => {
-            if (item.parent === undefined) {
-                item.parent = 0;
-                item.path = [];
-            }
-            item.created = date;
-        })
-
-        
-    }
 }
 
 
