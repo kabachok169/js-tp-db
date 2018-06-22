@@ -124,6 +124,12 @@ class PostService extends DataBaseService {
         return [...candidates];
     }
 
+    selectAuthors(posts) {
+        let candidates = new Set();
+        posts.forEach(post => candidates.add(post.author));
+        return [...candidates];
+    }
+
     async getPosts(slugOrId, limit, since, sort, desc) {
 
         const [status, thread] = await threadService.getByIdOrSlug(slugOrId);
