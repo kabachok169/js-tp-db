@@ -13,7 +13,8 @@ CREATE TABLE users
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueEmail ON users(lower(email));
-CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueNickname ON users(nickname);
+-- CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueNickname ON users(nickname);
+CREATE UNIQUE INDEX IF NOT EXISTS indexSuperStrange ON users(lower(nickname), nickname);
 CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueNicknameLow ON users(LOWER(nickname collate "ucs_basic"));
 
 
@@ -47,6 +48,7 @@ CREATE TABLE threads
 
 CREATE UNIQUE INDEX IF NOT EXISTS indexThreadsUniqueSlug ON threads(lower(slug));
 CREATE INDEX IF NOT EXISTS indexThreadsForum ON threads(lower(forum));
+CREATE INDEX IF NOT EXISTS indexThreadsForumCreated ON threads(lower(forum), created);
 
 
 -- POSTS ----------------------------------------------------------------------------------------------------
@@ -103,11 +105,8 @@ CREATE INDEX IF NOT EXISTS indexUsersForumsUserLow on usersForums (lower(author)
 
 -- FUNCTIONS & TRIGGERS -------------------------------------------------------------------------------------
 CREATE FUNCTION tree_path() RETURNS trigger AS $tree_path$
-DECLARE
-  pid BIGINT;
 BEGIN
-  pid := new.parent;
-  new.path := array_append((SELECT path from posts WHERE id = pid), new.id);
+  new.path := array_append((SELECT path from posts WHERE id = new.parent::BIGINT), new.id);
   RETURN new;
 END;
 $tree_path$ LANGUAGE plpgsql;
