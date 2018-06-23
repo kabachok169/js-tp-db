@@ -22,8 +22,6 @@ class ThreadService extends DataBaseService {
 
         const thread = await this.dataBase.oneOrNone(query, slugOrId).catch(reason => console.log(reason));
 
-        // console.log(thread);
-
         if (!thread) {
             return [404, {message: 'No thread found'}];
         }
@@ -68,17 +66,14 @@ class ThreadService extends DataBaseService {
         }
 
         const author = await this.dataBase.oneOrNone(
-            "SELECT nickname FROM users WHERE LOWER(nickname) = LOWER($1)", vote.nickname
+            `SELECT nickname FROM users WHERE LOWER(nickname) = LOWER('${vote.nickname}')`
         ).catch(reason => console.log(reason));
-        // console.log('got thread');
-
+        
         if (!author) {
             return [404, {message: 'No author found'}];
         }
 
         const thread = await this.dataBase.oneOrNone(query, slugOrId).catch(reason => console.log(reason));
-        // console.log('got thread');
-
         if (!thread) {
             return [404, {message: 'No thread found'}];
         }
@@ -86,8 +81,7 @@ class ThreadService extends DataBaseService {
         thread.id = +thread.id;
 
         const oldVote = await this.dataBase.oneOrNone(
-            `SELECT * FROM votes
-             WHERE votes.thread=${thread.id} AND votes.nickname='${vote.nickname}' LIMIT 1;`
+            `SELECT * FROM votes WHERE votes.thread = ${thread.id} AND LOWER(votes.nickname) = LOWER('${author.nickname}') LIMIT 1;` 
         ).catch(reason => console.log(reason));
 
         if (!oldVote) {

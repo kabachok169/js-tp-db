@@ -16,7 +16,7 @@ class ForumService extends DataBaseService {
         }
 
         const conflict = await this.dataBase.oneOrNone(
-            `SELECT * from forum WHERE LOWER(slug) = LOWER('${forum.slug}');`
+            `SELECT * FROM forum WHERE LOWER(slug) = LOWER('${forum.slug}');`
         ).catch(reason => console.log(reason));
 
         if (conflict) {
