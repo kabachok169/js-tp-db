@@ -5,3 +5,4 @@ built
 tests/report.html
 .vscode
 *.dat.gz
+*.best.txt

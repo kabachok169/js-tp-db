@@ -12,7 +12,7 @@ CREATE TABLE users
   fullname CITEXT
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueEmail ON users(email);
+CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueEmail ON users(lower(email));
 CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueNickname ON users(nickname);
 CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueNicknameLow ON users(LOWER(nickname collate "ucs_basic"));
 
@@ -28,7 +28,7 @@ CREATE TABLE forum
   posts INTEGER DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS indexForumsUser ON forum(author);
+CREATE INDEX IF NOT EXISTS indexForumsUser ON forum(lower(author));
 CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueSlugForums ON forum(lower(slug));
 
 
@@ -45,9 +45,8 @@ CREATE TABLE threads
   votes BIGINT DEFAULT 0
 );
 
--- CREATE INDEX IF NOT EXISTS indexThreadUser ON thread(author);
--- CREATE INDEX IF NOT EXISTS indexThreadForum ON thread(forum);
-CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueSlugThread ON threads(lower(slug));
+CREATE UNIQUE INDEX IF NOT EXISTS indexThreadsUniqueSlug ON threads(lower(slug));
+CREATE INDEX IF NOT EXISTS indexThreadsForum ON threads(lower(forum));
 
 
 -- POSTS ----------------------------------------------------------------------------------------------------
@@ -67,20 +66,9 @@ CREATE TABLE posts (
 
 CREATE INDEX IF NOT EXISTS indexPostThreadId ON posts(thread, id);
 CREATE INDEX IF NOT EXISTS indexPostIdRoot ON posts(id, (path[1]));
+CREATE INDEX IF NOT EXISTS indexPostIdPath ON posts(id, path);
 CREATE INDEX IF NOT EXISTS indexPostParentThreadRoot ON posts(parent, thread, (path[1]));
 CREATE INDEX IF NOT EXISTS indexPostRootThread ON posts(thread, (path[1]));
-
-
--- CREATE INDEX IF NOT EXISTS indexPostAuthor ON messages(author);
--- CREATE INDEX IF NOT EXISTS indexPostForum ON messages(forum);
--- CREATE INDEX IF NOT EXISTS indexPostThread ON messages(thread);
--- CREATE INDEX IF NOT EXISTS indexPostCreated ON messages(created);
--- CREATE INDEX IF NOT EXISTS indexPostPath ON messages((path[1]));
--- CREATE INDEX IF NOT EXISTS indexPostThreadCreateId ON messages(thread, created, id);
--- CREATE INDEX IF NOT EXISTS indexPostParentThreadId ON messages(parent, thread, id);
--- CREATE INDEX IF NOT EXISTS indexPostIdThread ON messages(id, thread);
--- CREATE INDEX IF NOT EXISTS indexPostThreadPath ON messages(thread, path);
-
 
 
 -- VOTES ----------------------------------------------------------------------------------------------------
@@ -95,6 +83,8 @@ CREATE TABLE votes
 
 CREATE INDEX IF NOT EXISTS indexVoteThread ON votes(thread);
 CREATE INDEX IF NOT EXISTS indexVoteNick ON votes(nickname);
+CREATE UNIQUE INDEX IF NOT EXISTS indexVoteNickThread ON votes(lower(nickname), thread);
+
 
 
 -- User-Forum relation --------------------------------------------------------------------------------------
