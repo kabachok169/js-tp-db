@@ -63,14 +63,6 @@ class ForumService extends DataBaseService {
             return [404, {message: 'No forum found'}];
         }
 
-        await this.dataBase.oneOrNone(
-            `UPDATE forum SET threads = threads + 1 WHERE id = ${forum.id}`
-        ).catch(reason => console.log(reason));
-
-        await this.dataBase.oneOrNone(
-            `INSERT INTO usersForums (author, forum) values ('${user.nickname}', '${forum.slug}') ON CONFLICT DO NOTHING;`
-        ).catch(reason => console.log(reason));
-
         // console.log(2);
 
         if (thread.slug) {
@@ -82,6 +74,15 @@ class ForumService extends DataBaseService {
                 return [409, oldThread];
             }
         }
+
+        await this.dataBase.oneOrNone(
+            `UPDATE forum SET threads = threads + 1 WHERE id = ${forum.id}`
+        ).catch(reason => console.log(reason));
+
+        await this.dataBase.oneOrNone(
+            `INSERT INTO usersForums (author, forum) values ('${user.nickname}', '${forum.slug}') ON CONFLICT DO NOTHING;`
+        ).catch(reason => console.log(reason));
+
 
         // console.log(3);
 

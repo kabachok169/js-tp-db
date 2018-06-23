@@ -103,14 +103,14 @@ class ThreadService extends DataBaseService {
         } else if (!sum) {
             await this.dataBase.none(
                 `UPDATE votes SET voice=${vote.voice} 
-                 WHERE votes.thread=${thread.id} AND votes.nickname='${vote.nickname}';`
+                 WHERE votes.thread=${thread.id} AND LOWER(votes.nickname)=LOWER('${vote.nickname}');`
             ).catch(reason => console.log(reason));
             const newThread = await this.updateVoteThread(thread.id, 2 * vote.voice);
             return [200, newThread];
         } else {
             await this.dataBase.none(
                 `UPDATE votes SET voice=${vote.voice} 
-                 WHERE votes.thread=${thread.id} AND votes.nickname='${vote.nickname}';`
+                 WHERE votes.thread=${thread.id} AND LOWER(votes.nickname)=LOWER('${vote.nickname}');`
             ).catch(reason => console.log(reason));
             const newThread = await this.updateVoteThread(thread.id, -vote.voice);
             return [200, newThread];

@@ -80,12 +80,12 @@ CREATE TABLE votes
   nickname VARCHAR REFERENCES users (nickname),
   thread BIGINT REFERENCES threads (id),
   
-  UNIQUE (nickname, thread)
+  UNIQUE (thread, nickname)
 );
 
-CREATE INDEX IF NOT EXISTS indexVoteThread ON votes(thread);
+-- CREATE INDEX IF NOT EXISTS indexVoteThread ON votes(thread);
 CREATE INDEX IF NOT EXISTS indexVoteNick ON votes(nickname);
-CREATE UNIQUE INDEX IF NOT EXISTS indexVoteNickThread ON votes(lower(nickname), thread);
+CREATE UNIQUE INDEX IF NOT EXISTS indexVoteNickThread ON votes(thread, lower(nickname));
 
 
 
