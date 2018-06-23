@@ -2,6 +2,7 @@ CREATE EXTENSION IF NOT EXISTS CITEXT;
 
 
 
+-- USERS ----------------------------------------------------------------------------------------------------
 CREATE TABLE users
 (
   id BIGSERIAL UNIQUE,
@@ -15,6 +16,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueEmail ON users(email);
 CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueNickname ON users(nickname);
 CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueNicknameLow ON users(LOWER(nickname collate "ucs_basic"));
 
+
+-- FORUMS ---------------------------------------------------------------------------------------------------
 CREATE TABLE forum
 (
   id BIGSERIAL primary key,
@@ -25,10 +28,11 @@ CREATE TABLE forum
   posts INTEGER DEFAULT 0
 );
 
-
 CREATE INDEX IF NOT EXISTS indexForumsUser ON forum(author);
-CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueSlugForums ON forum(slug);
+CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueSlugForums ON forum(lower(slug));
 
+
+-- THREADS --------------------------------------------------------------------------------------------------
 CREATE TABLE threads
 (
   id BIGSERIAL PRIMARY KEY,
@@ -43,8 +47,10 @@ CREATE TABLE threads
 
 -- CREATE INDEX IF NOT EXISTS indexThreadUser ON thread(author);
 -- CREATE INDEX IF NOT EXISTS indexThreadForum ON thread(forum);
-CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueSlugThread ON threads(slug);
+CREATE UNIQUE INDEX IF NOT EXISTS indexUniqueSlugThread ON threads(lower(slug));
 
+
+-- POSTS ----------------------------------------------------------------------------------------------------
 CREATE TABLE posts (
 
   id BIGSERIAL NOT NULL PRIMARY KEY,
@@ -59,6 +65,12 @@ CREATE TABLE posts (
   path BIGINT ARRAY
 );
 
+CREATE INDEX IF NOT EXISTS indexPostThreadId ON posts(thread, id);
+CREATE INDEX IF NOT EXISTS indexPostIdRoot ON posts(id, (path[1]));
+CREATE INDEX IF NOT EXISTS indexPostParentThreadRoot ON posts(parent, thread, (path[1]));
+CREATE INDEX IF NOT EXISTS indexPostRootThread ON posts(thread, (path[1]));
+
+
 -- CREATE INDEX IF NOT EXISTS indexPostAuthor ON messages(author);
 -- CREATE INDEX IF NOT EXISTS indexPostForum ON messages(forum);
 -- CREATE INDEX IF NOT EXISTS indexPostThread ON messages(thread);
@@ -69,6 +81,9 @@ CREATE TABLE posts (
 -- CREATE INDEX IF NOT EXISTS indexPostIdThread ON messages(id, thread);
 -- CREATE INDEX IF NOT EXISTS indexPostThreadPath ON messages(thread, path);
 
+
+
+-- VOTES ----------------------------------------------------------------------------------------------------
 CREATE TABLE votes
 (
   voice INT CHECK (voice in (1, -1)),
@@ -81,18 +96,22 @@ CREATE TABLE votes
 CREATE INDEX IF NOT EXISTS indexVoteThread ON votes(thread);
 CREATE INDEX IF NOT EXISTS indexVoteNick ON votes(nickname);
 
+
+-- User-Forum relation --------------------------------------------------------------------------------------
 CREATE TABLE usersForums (
+
   author VARCHAR REFERENCES users(nickname) NOT NULL,
   forum CITEXT REFERENCES forum(slug) NOT NULL,
 
   UNIQUE(forum, author)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS indexUsersForumsAuthorForum(lower(forum), lower(author));
+CREATE UNIQUE INDEX IF NOT EXISTS indexUsersForumsAuthorForum ON usersForums(lower(forum), lower(author));
 CREATE INDEX IF NOT EXISTS indexUsersForumsUser ON usersForums (author);
 CREATE INDEX IF NOT EXISTS indexUsersForumsUserLow on usersForums (lower(author) COLLATE "ucs_basic");
 
 
+-- FUNCTIONS & TRIGGERS -------------------------------------------------------------------------------------
 CREATE FUNCTION tree_path() RETURNS trigger AS $tree_path$
 DECLARE
   pid BIGINT;

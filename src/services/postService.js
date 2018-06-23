@@ -9,7 +9,7 @@ class PostService extends DataBaseService {
 
     async get(id, related) {
         const result = {};
-        const post = await this.dataBase.oneOrNone(`SELECT * FROM posts WHERE id = ${id}`);
+        const post = await this.dataBase.oneOrNone(`SELECT * FROM posts WHERE id = ${id}`).catch(reason => console.log(reason));
         if (!post) {
             return [404, {message: 'No thread found'}];
         }
@@ -20,20 +20,23 @@ class PostService extends DataBaseService {
         if (!related) {
             return [200, result];
         }
-        console.log(related);
+        // console.log(related);
         if (related.indexOf('user') > -1) {
-            const user = await this.dataBase.one(this.checkUser(post.author));
+            const user = await this.dataBase.one(this.checkUser(post.author)).catch(reason => console.log(reason));
             result.author = user;
         }
         if (related.indexOf('forum') > -1) {
-            const forum = await this.dataBase.one(this.checkForum(post.forum));
+            const forum = await this.dataBase.one(this.checkForum(post.forum)).catch(reason => console.log(reason));
             forum.user = forum.author;
             forum.posts = +forum.posts;
             forum.threads = +forum.threads;
             result.forum = forum;
         }
         if (related.indexOf('thread') > -1) {
-            const thread = await this.dataBase.one(`SELECT * FROM threads WHERE id = ${post.thread};`);
+            const thread = await this.dataBase.one(
+                `SELECT * FROM threads WHERE id = ${post.thread};`
+            ).catch(reason => console.log(reason));
+
             thread.id = +thread.id;
             thread.votes = +thread.votes;
             result.thread = thread;
@@ -43,7 +46,7 @@ class PostService extends DataBaseService {
     }
 
     async update(id, postData) {
-        const post = await this.dataBase.oneOrNone(`SELECT * FROM posts WHERE id = ${id}`);
+        const post = await this.dataBase.oneOrNone(`SELECT * FROM posts WHERE id = ${id}`).catch(reason => console.log(reason));
 
         if (!post) {
             return [404, {message: 'No thread found'}];
@@ -58,7 +61,7 @@ class PostService extends DataBaseService {
 
         const newPost = await this.dataBase.one(
             `UPDATE posts SET isEdited=TRUE, message='${postData.message}' WHERE id = ${id} RETURNING *;`
-        );
+        ).catch(reason => console.log(reason));
 
         newPost.isEdited = newPost.isedited;
         newPost.id = +newPost.id;
@@ -70,9 +73,13 @@ class PostService extends DataBaseService {
     async createPosts(posts, threadSlugOrId, created) {
 
         const [status, thread] = await threadService.getByIdOrSlug(threadSlugOrId);
-        console.log(status);
+        // console.log(status);
         if (status === 404) {
             return [status, {message: 'No thread'}];
+        }
+
+        if (posts.length === 0) {
+            return [201, posts];
         }
 
         const authors = this.selectAuthors(posts);
@@ -86,10 +93,6 @@ class PostService extends DataBaseService {
             if (foundAuthors.length < authors.length) {
                 return [404, {message: 'Some users are wrong'}];
             }
-        }
-
-        if (posts.length === 0) {
-            return [201, posts];
         }
 
         const parents = this.selectParents(posts);
@@ -138,7 +141,7 @@ class PostService extends DataBaseService {
             added.push(post);
             await this.dataBase.oneOrNone(
                 `INSERT INTO usersForums (author, forum) values ('${post.author}', '${forumSlug}') ON CONFLICT DO NOTHING;`
-            );
+            ).catch(reason => console.log(reason));
         }
 
         // console.log(added)        
@@ -152,11 +155,8 @@ class PostService extends DataBaseService {
     }
 
     selectParents(posts) {
-
         let candidates = new Set();
-
         posts.forEach(post => post.parent && candidates.add(post.parent));
-
         return [...candidates];
     }
 
@@ -179,9 +179,13 @@ class PostService extends DataBaseService {
                             : (since ? `AND path > (SELECT path FROM posts WHERE id = ${since})` : '')}
                         ORDER BY path ${desc === 'true' ? 'DESC' : 'ASC'}, id ${desc === 'true'  ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit}` : ''}`;
             
-            const result = await this.dataBase.manyOrNone(request);
+            const result = await this.dataBase.manyOrNone(request).catch(reason => console.log(reason));
 
-            result.forEach(post => {post.id = +post.id; post.parent = +post.parent; delete post.path; console.log(post)});
+            result.forEach(post => {
+                post.id = +post.id; 
+                post.parent = +post.parent; 
+                // delete post.path;
+            });
             return [200, result];
         }
         if (sort === 'flat') {
@@ -189,39 +193,65 @@ class PostService extends DataBaseService {
                         ${desc === 'true' ? (since ? `AND id < ${since}` : '') : (since ? `AND id > ${since}` : '')}
                         ORDER BY created ${desc === 'true' ? 'DESC' : 'ASC'}, id ${desc === 'true' ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit}` : ''}`;
             
-            const result = await this.dataBase.manyOrNone(request);
+            const result = await this.dataBase.manyOrNone(request).catch(reason => console.log(reason));
 
-            result.forEach(post => {post.id = +post.id; post.parent = +post.parent; delete post.path; console.log(post)});
+            result.forEach(post => {
+                post.id = +post.id; 
+                post.parent = +post.parent; 
+                // delete post.path;
+            });
             return [200, result];
         }
-        if (sort === 'parent_tree') {
-            const parents = await this.dataBase.manyOrNone(
-                this.getParents(thread.id, since, desc, limit)
-            ).catch(reason => console.log(reason));
+        
+        // parent tree sort
+        // const parents = await this.dataBase.manyOrNone(
+        //     this.getParents(thread.id, since, desc, limit)
+        // ).catch(reason => console.log(reason));
 
-            let posts = [];
-            for (let parentID of parents) {
-                let request = `SELECT * FROM posts where thread = ${thread.id} AND path[1] = ${parentID.id}
-                        ${desc === 'true' ? (since ? `AND path[1] < (SELECT path[1] FROM posts WHERE id = ${since})` : '')
-                    : (since ? ` AND path[1] > (SELECT path[1] FROM posts WHERE id = ${since})` : '')}
-                        ORDER BY path, id`;
-                
-                const result = await this.dataBase.manyOrNone(request);
-                posts = posts.concat(result);
-            }
-            posts.forEach(post => {post.id = +post.id; post.parent = +post.parent; delete post.path; console.log(post)});
-            return [200, posts];
-        }
+        // let posts = [];
+        // for (let parentID of parents) {
+        //     let request = `SELECT * FROM posts where thread = ${thread.id} AND path[1] = ${parentID.id}
+        //             ${desc === 'true' ? (since ? `AND path[1] < (SELECT path[1] FROM posts WHERE id = ${since})` : '')
+        //         : (since ? ` AND path[1] > (SELECT path[1] FROM posts WHERE id = ${since})` : '')}
+        //             ORDER BY path, id`;
+            
+        //     const result = await this.dataBase.manyOrNone(request).catch(reason => console.log(request, reason));
+        //     posts.push(...result);
+        // }
+
+        // const rand = () => Math.floor(Math.random() * 10)
+        // const UID = `UID-${rand()}-${rand()}-${rand()}` 
+
+        // console.log(UID + ": parent_tree_sort")
+        const subQuery = this.getParents(thread.id, since, desc, limit);
+        const query = 
+            `SELECT * FROM posts WHERE path[1] IN (${subQuery}) AND thread = ${thread.id} ORDER BY ${ desc === 'true' ? 'path[1] DESC, path' : 'path' };`;
+        
+        // console.log(UID + ": query: " + query)
+
+        const posts = await this.dataBase.manyOrNone(query).catch(reason => console.log(query, reason));
+
+        // console.log(UID + ": result: size=" + posts.length)
+
+        posts.forEach(post => {
+            post.id = +post.id; 
+            post.parent = +post.parent; 
+            // delete post.path;
+        });
+
+        // console.log(UID + ": done!")
+
+        return [200, posts];
+        
     }
 
     getParents(threadId, since, desc, limit) {
         const request =
-            `SELECT id FROM posts WHERE thread = ${threadId} AND parent = 0${desc === 'true' ? 
-                (since ? ` AND path[1] < (SELECT path[1] FROM posts WHERE id = ${since})` : '') :
-                (since ? ` AND path[1] > (SELECT path[1] FROM posts WHERE id = ${since})` : '')}
-            ORDER BY id ${desc === 'true' ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit};` : ''}`;
+            `SELECT id FROM posts WHERE parent = 0 AND thread = ${threadId}${desc === 'true' ? 
+                (since ? ` AND path[1] < (SELECT path[1] FROM posts p WHERE p.id = ${since})` : '') :
+                (since ? ` AND path[1] > (SELECT path[1] FROM posts p WHERE p.id = ${since})` : '')}
+            ORDER BY id ${desc === 'true' ? 'DESC' : 'ASC'} ${limit ? `LIMIT ${limit}` : ''}`;
         
-
         return request;
     }
 }

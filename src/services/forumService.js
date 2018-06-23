@@ -9,7 +9,7 @@ class ForumService extends DataBaseService {
     async create(forum) {
         const user = await this.dataBase.oneOrNone(
             this.checkUser(forum.user)
-        );
+        ).catch(reason => console.log(reason));
 
         if (!user) {
             return [404, {message: 'User not found'}];
@@ -38,7 +38,7 @@ class ForumService extends DataBaseService {
     async get(slug) {
         const forum = await this.dataBase.oneOrNone(
             this.checkForum(slug)
-        );
+        ).catch(reason => console.log(reason));
         // console.log(forum);
         if (!forum) {
             return [404, {message: 'No user found'}];
@@ -54,10 +54,10 @@ class ForumService extends DataBaseService {
         // console.log(1);
         const user = await this.dataBase.oneOrNone(
             this.checkUser(thread.author)
-        );
+        ).catch(reason => console.log(reason));
         const forum = await this.dataBase.oneOrNone(
             this.checkForum(slug)
-        );
+        ).catch(reason => console.log(reason));
 
         if (!forum || !user) {
             return [404, {message: 'No forum found'}];
@@ -65,16 +65,16 @@ class ForumService extends DataBaseService {
 
         await this.dataBase.oneOrNone(
             `UPDATE forum SET threads = threads + 1 WHERE id = ${forum.id}`
-        );
+        ).catch(reason => console.log(reason));
 
         await this.dataBase.oneOrNone(
             `INSERT INTO usersForums (author, forum) values ('${user.nickname}', '${forum.slug}') ON CONFLICT DO NOTHING;`
-        );
+        ).catch(reason => console.log(reason));
 
         // console.log(2);
 
         if (thread.slug) {
-            const oldThread = await this.dataBase.oneOrNone(this.checkThread(thread.slug));
+            const oldThread = await this.dataBase.oneOrNone(this.checkThread(thread.slug)).catch(reason => console.log(reason));
 
             if (oldThread) {
                 oldThread.id = +oldThread.id;
@@ -97,7 +97,7 @@ class ForumService extends DataBaseService {
 
         const newThread = await this.dataBase.one(
             request
-        );
+        ).catch(reason => console.log(reason));
 
         newThread.id = +newThread.id;
         newThread.votes = +newThread.votes;
@@ -109,7 +109,7 @@ class ForumService extends DataBaseService {
     async getThreads(slug, since, limit, desc) {
         const forum = await this.dataBase.oneOrNone(
             this.checkForum(slug)
-        );
+        ).catch(reason => console.log(reason));
 
         if (!forum) {
             return [404, {message: 'No forum found'}];
@@ -124,7 +124,7 @@ class ForumService extends DataBaseService {
             }
              ORDER BY threads.created ${desc ==='true' ? 'DESC' : 'ASC'} 
              ${limit ? ` LIMIT ${limit}` : ''}`
-        );
+        ).catch(reason => console.log(reason));
 
         threads.forEach((item) => {
             item.id = +item.id;
@@ -137,7 +137,7 @@ class ForumService extends DataBaseService {
     async getUsers(slug, since, limit, desc) {
         const forum = await this.dataBase.oneOrNone(
             this.checkForum(slug)
-        );
+        ).catch(reason => console.log(reason));
 
         if (!forum) {
             return [404, {message: 'No forum found'}];
@@ -154,7 +154,7 @@ class ForumService extends DataBaseService {
                 }
              ORDER BY LOWER(u.nickname) ${desc ==='true' ? 'DESC' : 'ASC'} 
              ${limit ? ` LIMIT ${limit}` : ''}`
-        );
+        ).catch(reason => console.log(reason));
 
         return [200, users];
     }
